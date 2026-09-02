@@ -45,7 +45,7 @@ module SLA
       body = request(:get, "#{sessions_path(session_id)}/messages")
       body.fetch('items').map do |item|
         Message.new(source: item['source'], origin: item['origin'], message: item['message'],
-                    created_at: Time.at(item['created_at']).utc)
+                    created_at: unix_time(item['created_at']))
       end
     end
 
@@ -62,6 +62,10 @@ module SLA
         f.request :json
         f.response :json
       end
+    end
+
+    def unix_time(seconds)
+      Time.at(seconds).utc unless seconds.nil?
     end
 
     def sessions_path(session_id = nil)

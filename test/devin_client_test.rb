@@ -135,6 +135,13 @@ module SLA
       assert_match(/^Done\./, messages.last.message)
     end
 
+    def test_messages_without_created_at_keep_nil_time
+      body = { items: [{ source: 'devin', message: 'hi', created_at: nil }] }.to_json
+      stub_request(:get, "#{BASE}/sessions/x/messages").to_return(status: 200, body: body, headers: json_header)
+
+      assert_nil @client.messages('x').first.created_at
+    end
+
     # Request-shape only: no recorded response exists for this endpoint.
     def test_send_message_posts_message_body
       stub_request(:post, "#{BASE}/sessions/7cde/messages").to_return(status: 200, body: '{}', headers: json_header)
