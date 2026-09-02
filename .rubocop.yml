@@ -31,3 +31,6 @@ Metrics/ClassLength:
 Metrics/MethodLength:
   Exclude:
     - "test/**/*_test.rb"
+
+Layout/ClassStructure:
+  Enabled: true
