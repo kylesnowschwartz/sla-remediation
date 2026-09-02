@@ -17,8 +17,9 @@ module SLA
     set :root, File.expand_path('../..', __dir__)
     set :views, File.join(root, 'views')
 
+    set :github, -> { @github ||= GitHubClient.new }
     # SECURITY-SLA.md of the target repo, fetched on first use and kept for the process lifetime.
-    set :policy, -> { @policy ||= Policy.fetch(GitHubClient.new, repo: ENV.fetch('SLA_REPO')) }
+    set :policy, -> { @policy ||= Policy.fetch(settings.github, repo: ENV.fetch('SLA_REPO')) }
     set :delivery_log, Logger.new($stdout)
     # Devin client and dispatcher output, created on first use; only used when SLA_AUTO_DISPATCH is "true".
     set :devin, -> { @devin ||= DevinClient.new }
@@ -67,8 +68,8 @@ module SLA
     def auto_dispatch(issue_number)
       return :off unless ENV['SLA_AUTO_DISPATCH'] == 'true'
 
-      Dispatcher.new(db: DB, devin: settings.devin, repo: ENV.fetch('SLA_REPO'), out: settings.dispatch_out)
-                .dispatch(issue_number)
+      Dispatcher.new(db: DB, devin: settings.devin, github: settings.github, repo: ENV.fetch('SLA_REPO'),
+                     out: settings.dispatch_out).dispatch(issue_number)
     rescue SLA::Error => e
       "error (#{e.message})"
     end

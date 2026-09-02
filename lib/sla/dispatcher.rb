@@ -7,13 +7,15 @@ require_relative 'remediation_prompt'
 
 module SLA
   # Starts the one Devin session that remediates a recorded finding and records
-  # it in the sessions table. A finding without a fix version is never dispatched.
+  # it in the sessions table. A finding without a fix version is never dispatched,
+  # and neither is one whose fix branch or pull request already exists on GitHub.
   class Dispatcher
     TAG = 'sla-remediation'
 
-    def initialize(db:, devin:, repo:, max_acu_limit: 3, out: $stdout)
+    def initialize(db:, devin:, github:, repo:, max_acu_limit: 3, out: $stdout)
       @db = db
       @devin = devin
+      @github = github
       @repo = repo
       @max_acu_limit = max_acu_limit
       @out = out
@@ -24,7 +26,7 @@ module SLA
       finding = findings.first(issue_number: issue_number)
       return :not_found unless finding
       return :not_fixable if finding[:fix_version].nil?
-      return :already_dispatched if dispatched?(finding)
+      return :already_dispatched if dispatched?(finding) || remediation_exists?(finding)
 
       session = @devin.create_session(**session_request(finding))
       record(finding, session)
@@ -62,8 +64,26 @@ module SLA
 
     private
 
+    # The branch the prompt tells the session to create.
+    def fix_branch(finding)
+      "fix/#{finding[:package]}-sla-#{finding[:issue_number]}"
+    end
+
     def dispatched?(finding)
       !sessions.where(finding_id: finding[:id]).empty?
+    end
+
+    # Whether the fix branch or an open pull request from it is already on GitHub, and says which.
+    def remediation_exists?(finding)
+      branch = fix_branch(finding)
+      if (pull = @github.open_pull_request(@repo, head_branch: branch))
+        @out.puts "issue ##{finding[:issue_number]} already dispatched: open pull request #{pull.html_url}"
+      elsif @github.branch_exists?(@repo, branch)
+        @out.puts "issue ##{finding[:issue_number]} already dispatched: branch #{branch} exists in #{@repo}"
+      else
+        return false
+      end
+      true
     end
 
     def record(finding, session)

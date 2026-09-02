@@ -6,8 +6,9 @@
 #   bin/dispatch ISSUE_NUMBER             # create the session and record it
 #   bin/dispatch ISSUE_NUMBER --dry-run   # print the prompt and request payload only
 #
-# Needs DEVIN_SERVICE_API_KEY_V3, DEVIN_ORG_ID, and SLA_REPO. Exits 0 when the
-# finding is dispatched or already was, 1 otherwise.
+# Needs DEVIN_SERVICE_API_KEY_V3, DEVIN_ORG_ID, and SLA_REPO; SLA_GITHUB_TOKEN is
+# used when set to check the target repo for an existing fix branch or pull
+# request. Exits 0 when the finding is dispatched or already was, 1 otherwise.
 
 require 'bundler/setup'
 require 'optparse'
@@ -15,6 +16,7 @@ require 'optparse'
 require_relative '../lib/sla/db'
 require_relative '../lib/sla/devin_client'
 require_relative '../lib/sla/dispatcher'
+require_relative '../lib/sla/github_client'
 
 REQUIRED_ENV = %w[DEVIN_SERVICE_API_KEY_V3 DEVIN_ORG_ID SLA_REPO].freeze
 SUCCESS = %i[dispatched already_dispatched previewed].freeze
@@ -40,7 +42,8 @@ unless missing.empty?
   exit 1
 end
 
-dispatcher = SLA::Dispatcher.new(db: SLA::DB, devin: SLA::DevinClient.new, repo: ENV.fetch('SLA_REPO'))
+dispatcher = SLA::Dispatcher.new(db: SLA::DB, devin: SLA::DevinClient.new, github: SLA::GitHubClient.new,
+                                 repo: ENV.fetch('SLA_REPO'))
 result = dry_run ? dispatcher.preview(issue_number) : dispatcher.dispatch(issue_number)
 puts result
 exit SUCCESS.include?(result) ? 0 : 1

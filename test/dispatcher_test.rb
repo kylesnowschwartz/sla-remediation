@@ -9,16 +9,23 @@ module SLA
     ORG_ID = 'org-test'
     REPO = 'kylesnowschwartz/superset'
     SESSIONS_URL = "https://api.devin.ai/v3/organizations/#{ORG_ID}/sessions".freeze
+    PULLS_URL = "https://api.github.com/repos/#{REPO}/pulls".freeze
+    PULLS_QUERY = { state: 'open', head: 'kylesnowschwartz:fix/urllib3-sla-4' }.freeze
+    REF_URL = "https://api.github.com/repos/#{REPO}/git/ref/heads/fix/urllib3-sla-4".freeze
+    GITHUB_API = /api\.github\.com/
     FIXTURES = File.expand_path('fixtures', __dir__)
+    JSON_HEADER = { 'Content-Type' => 'application/json' }.freeze
 
     def setup
       DB[:sessions].delete
       DB[:findings].delete
       @out = StringIO.new
-      @dispatcher = Dispatcher.new(db: DB, devin: DevinClient.new(api_key: 'test-key', org_id: ORG_ID), repo: REPO,
-                                   out: @out)
+      @dispatcher = Dispatcher.new(db: DB, devin: DevinClient.new(api_key: 'test-key', org_id: ORG_ID),
+                                   github: GitHubClient.new(token: 'test-token'), repo: REPO, out: @out)
       stub_request(:post, SESSIONS_URL).to_return(status: 200, body: fixture('devin/create_session_response.json'),
-                                                  headers: { 'Content-Type' => 'application/json' })
+                                                  headers: JSON_HEADER)
+      stub_request(:get, PULLS_URL).with(query: PULLS_QUERY).to_return(status: 200, body: '[]', headers: JSON_HEADER)
+      stub_request(:get, REF_URL).to_return(status: 404, body: '{"message":"Not Found"}', headers: JSON_HEADER)
     end
 
     def test_dispatch_creates_one_session_and_records_it
@@ -27,6 +34,8 @@ module SLA
       assert_equal :dispatched, @dispatcher.dispatch(4)
 
       assert_requested(:post, SESSIONS_URL, times: 1) { |req| session_request?(JSON.parse(req.body)) }
+      assert_requested :get, PULLS_URL, query: PULLS_QUERY
+      assert_requested :get, REF_URL
       assert_equal 1, DB[:sessions].count
       session = DB[:sessions].first
 
@@ -62,10 +71,48 @@ module SLA
         DevinClient::Session.new(response)
       end
 
-      result = Dispatcher.new(db: DB, devin: racer, repo: REPO, out: @out).dispatch(4)
+      github = GitHubClient.new(token: 'test-token')
+      result = Dispatcher.new(db: DB, devin: racer, github: github, repo: REPO, out: @out).dispatch(4)
 
       assert_equal :already_dispatched, result
       assert_equal ['winner'], DB[:sessions].select_map(:devin_session_id)
+    end
+
+    def test_existing_fix_branch_is_already_dispatched_without_a_post
+      record_finding(4)
+      ref = { 'ref' => 'refs/heads/fix/urllib3-sla-4', 'object' => { 'sha' => 'abc123' } }
+      stub_request(:get, REF_URL).to_return(status: 200, body: ref.to_json, headers: JSON_HEADER)
+
+      assert_equal :already_dispatched, @dispatcher.dispatch(4)
+
+      assert_not_requested :post, SESSIONS_URL
+      assert_equal 0, DB[:sessions].count
+      assert_equal "issue #4 already dispatched: branch fix/urllib3-sla-4 exists in #{REPO}\n", @out.string
+    end
+
+    def test_open_fix_pull_request_is_already_dispatched_without_a_post
+      record_finding(4)
+      pulls = [{ 'number' => 9, 'title' => 'fix: urllib3', 'html_url' => "https://github.com/#{REPO}/pull/9" }]
+      stub_request(:get, PULLS_URL).with(query: PULLS_QUERY)
+                                   .to_return(status: 200, body: pulls.to_json, headers: JSON_HEADER)
+
+      assert_equal :already_dispatched, @dispatcher.dispatch(4)
+
+      assert_not_requested :post, SESSIONS_URL
+      assert_not_requested :get, REF_URL
+      assert_equal 0, DB[:sessions].count
+      assert_equal "issue #4 already dispatched: open pull request https://github.com/#{REPO}/pull/9\n", @out.string
+    end
+
+    def test_github_errors_other_than_404_propagate_without_a_post
+      record_finding(4)
+      stub_request(:get, REF_URL).to_return(status: 500, body: '{"message":"boom"}', headers: JSON_HEADER)
+
+      error = assert_raises(GitHubAPIError) { @dispatcher.dispatch(4) }
+
+      assert_equal 500, error.status
+      assert_not_requested :post, SESSIONS_URL
+      assert_equal 0, DB[:sessions].count
     end
 
     def test_finding_without_a_fix_version_is_not_fixable
@@ -74,6 +121,7 @@ module SLA
       assert_equal :not_fixable, @dispatcher.dispatch(5)
 
       assert_not_requested :post, SESSIONS_URL
+      assert_not_requested :get, GITHUB_API
       assert_equal 0, DB[:sessions].count
     end
 
@@ -81,6 +129,7 @@ module SLA
       assert_equal :not_found, @dispatcher.dispatch(99)
 
       assert_not_requested :post, SESSIONS_URL
+      assert_not_requested :get, GITHUB_API
     end
 
     def test_preview_prints_the_prompt_and_payload_without_posting
@@ -89,6 +138,7 @@ module SLA
       assert_equal :previewed, @dispatcher.preview(4)
 
       assert_not_requested :post, SESSIONS_URL
+      assert_not_requested :get, GITHUB_API
       assert_equal 0, DB[:sessions].count
       assert_includes @out.string, 'named `fix/urllib3-sla-4`'
       payload = JSON.parse(@out.string[@out.string.index('{')..])

@@ -15,6 +15,7 @@ module SLA
 
     Advisory = Struct.new(:ghsa_id, :cve_id, :severity, :summary, keyword_init: true)
     Issue = Struct.new(:number, :title, :body, :html_url, keyword_init: true)
+    PullRequest = Struct.new(:number, :title, :html_url, keyword_init: true)
 
     # Without a token the client is anonymous, which is enough for the public
     # advisories endpoint but not for reading or filing issues.
@@ -47,6 +48,25 @@ module SLA
 
     def create_issue(repo, title:, body:, labels:)
       build_issue(request(:post, "/repos/#{repo}/issues", payload: { title: title, body: body, labels: labels }))
+    end
+
+    # The open pull request whose head is the named branch of the repository
+    # itself (not a fork), or nil when there is none.
+    def open_pull_request(repo, head_branch:)
+      owner = repo.split('/').first
+      params = { state: 'open', head: "#{owner}:#{head_branch}" }
+      item = request(:get, "/repos/#{repo}/pulls", params: params).first
+      PullRequest.new(number: item.fetch('number'), title: item['title'], html_url: item['html_url']) if item
+    end
+
+    # Whether the repository has a branch of that name; the ref endpoint answers 404 when it does not.
+    def branch_exists?(repo, branch)
+      request(:get, "/repos/#{repo}/git/ref/heads/#{branch}")
+      true
+    rescue GitHubAPIError => e
+      raise unless e.status == 404
+
+      false
     end
 
     private

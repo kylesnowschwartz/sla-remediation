@@ -12,6 +12,9 @@ module SLA
     REPO = 'kylesnowschwartz/superset'
     FIXTURES = File.expand_path('fixtures', __dir__)
     SESSIONS_URL = 'https://api.devin.ai/v3/organizations/org-test/sessions'
+    PULLS_URL = "https://api.github.com/repos/#{REPO}/pulls".freeze
+    REF_URL = "https://api.github.com/repos/#{REPO}/git/ref/heads/fix/urllib3-sla-4".freeze
+    JSON_HEADER = { 'Content-Type' => 'application/json' }.freeze
 
     def setup
       ENV['SLA_WEBHOOK_SECRET'] = SECRET
@@ -23,9 +26,13 @@ module SLA
       App.set :policy, Policy.load(security_sla_text)
       App.set :delivery_log, Logger.new(@log)
       App.set :devin, DevinClient.new(api_key: 'test-key', org_id: 'org-test')
+      App.set :github, GitHubClient.new(token: 'test-token')
       App.set :dispatch_out, StringIO.new
       stub_request(:post, SESSIONS_URL).to_return(status: 200, body: fixture('devin/create_session_response.json'),
-                                                  headers: { 'Content-Type' => 'application/json' })
+                                                  headers: JSON_HEADER)
+      stub_request(:get, PULLS_URL).with(query: { state: 'open', head: 'kylesnowschwartz:fix/urllib3-sla-4' })
+                                   .to_return(status: 200, body: '[]', headers: JSON_HEADER)
+      stub_request(:get, REF_URL).to_return(status: 404, body: '{"message":"Not Found"}', headers: JSON_HEADER)
     end
 
     def test_opened_then_labeled_records_one_finding
@@ -112,16 +119,36 @@ module SLA
 
     def test_auto_dispatch_failure_keeps_the_finding_and_logs_the_error
       ENV['SLA_AUTO_DISPATCH'] = 'true'
-      stub_request(:post, SESSIONS_URL).to_return(status: 500, body: '{"detail":"boom"}',
-                                                  headers: { 'Content-Type' => 'application/json' })
+      stub_request(:post, SESSIONS_URL).to_return(status: 503, body: '{"detail":"unavailable"}',
+                                                  headers: JSON_HEADER)
 
       deliver('github_issues_opened.json')
 
       assert_equal 200, last_response.status
       assert_equal({ 'result' => 'started' }, JSON.parse(last_response.body))
+      assert_requested :post, SESSIONS_URL, times: 1
       assert_equal 1, DB[:findings].count
       assert_equal 0, DB[:sessions].count
-      assert_match(/result=started dispatch=error \(Devin API returned 500/, @log.string)
+      assert_match(/result=started dispatch=error \(Devin API returned 503: .*unavailable.*\)$/, @log.string)
+
+      deliver('github_issues_labeled.json')
+
+      assert_equal({ 'result' => 'duplicate' }, JSON.parse(last_response.body))
+      assert_requested :post, SESSIONS_URL, times: 1
+      assert_equal 0, DB[:sessions].count
+    end
+
+    def test_auto_dispatch_skips_a_finding_whose_fix_branch_exists
+      ENV['SLA_AUTO_DISPATCH'] = 'true'
+      stub_request(:get, REF_URL).to_return(status: 200, body: '{"ref":"refs/heads/fix/urllib3-sla-4"}',
+                                            headers: JSON_HEADER)
+
+      deliver('github_issues_opened.json')
+
+      assert_equal({ 'result' => 'started' }, JSON.parse(last_response.body))
+      assert_not_requested :post, SESSIONS_URL
+      assert_equal 0, DB[:sessions].count
+      assert_match(/result=started dispatch=already_dispatched$/, @log.string)
     end
 
     def test_closed_marks_the_finding_remediated
