@@ -21,6 +21,7 @@ module SLA
       assert_equal '2.7.0', finding.fix_version
       assert_equal URLLIB3_GHSA_IDS, finding.advisories
       assert_equal 'pip-audit', finding.source
+      assert_equal 'pypi', finding.ecosystem
       assert_predicate finding, :fixable?
       assert_equal 'urllib3: Sensitive headers forwarded across origins in proxied low-level redirects',
                    finding.advisory_summaries['GHSA-qccp-gfcp-xxvc']

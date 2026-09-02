@@ -8,8 +8,9 @@ module SLA
   # bad it is, and where the finding came from.
   class FindingBlock
     REQUIRED = %w[package severity].freeze
+    DEFAULT_ECOSYSTEM = 'pypi'
 
-    attr_reader :package, :pinned, :fix_version, :advisories, :severity, :source
+    attr_reader :package, :pinned, :fix_version, :advisories, :severity, :source, :ecosystem
 
     # Parses the first fenced yaml block in the issue body.
     def self.parse(issue_body)
@@ -24,17 +25,17 @@ module SLA
 
     def initialize(attrs)
       @package = attrs['package'].to_s
-      @pinned = version(attrs['pinned'])
-      @fix_version = version(attrs['fix_version'])
-      @advisories = Array(attrs['advisories']).map(&:to_s).freeze
       @severity = attrs['severity'].to_s.downcase
-      @source = attrs['source']&.to_s
+      @advisories = Array(attrs['advisories']).map(&:to_s).freeze
+      @pinned, @fix_version, @source, @ecosystem = optional_text(attrs, 'pinned', 'fix_version', 'source', 'ecosystem')
+      @ecosystem ||= DEFAULT_ECOSYSTEM
     end
 
     private
 
-    def version(value)
-      value&.to_s
+    # The named keys as strings, nil where the block leaves them out.
+    def optional_text(attrs, *keys)
+      keys.map { |key| attrs[key]&.to_s }
     end
   end
 end

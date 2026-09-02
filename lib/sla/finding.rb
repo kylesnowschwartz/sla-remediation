@@ -9,11 +9,13 @@ module SLA
   # release that fixes every advisory, and the worst severity among them.
   class Finding
     SOURCE = 'pip-audit'
+    ECOSYSTEM = 'pypi'
     SEVERITIES = %w[low medium high critical].freeze
     # Used when no advisory carries a rating (GitHub reports those as "unknown").
     DEFAULT_SEVERITY = 'low'
 
-    attr_reader :package, :pinned, :fix_version, :advisories, :severity, :source, :advisory_summaries, :cve_ids
+    attr_reader :package, :pinned, :fix_version, :advisories, :severity, :source, :ecosystem,
+                :advisory_summaries, :cve_ids
 
     # Builds the finding for an audited package from `[vuln, advisory]` pairs:
     # each pip-audit vuln with the GitHub advisory it aliases.
@@ -53,6 +55,7 @@ module SLA
       @severity = severity
       @severity_rated = severity_rated
       @source = SOURCE
+      @ecosystem = ECOSYSTEM
       @advisory_summaries = advisory_summaries.freeze
       @cve_ids = cve_ids.freeze
     end
