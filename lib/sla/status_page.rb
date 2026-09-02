@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'json'
 require 'sequel'
 
 require_relative 'notifier'
@@ -14,7 +15,7 @@ module SLA
     TIME_FORMAT = Notifier::DUE_AT_FORMAT
     NONE = '—'
     SESSION_COLUMNS = %i[devin_session_id status status_detail acus_consumed pr_url pr_state outcome started_at
-                         pr_notified_at].freeze
+                         pr_notified_at structured_output structured_output_invalid].freeze
 
     Summary = Struct.new(:findings, :pull_requests_open, :inside_sla, :breached, keyword_init: true)
 
@@ -23,6 +24,7 @@ module SLA
       NOT_DISPATCHED = 'not dispatched'
       NOT_REPORTED = 'not reported'
       NO_FIX = 'no fix'
+      REPORT_REJECTED = 'report rejected (schema)'
       BREACHED_WORDS = %w[breached late].freeze
 
       attr_reader :record, :now
@@ -32,12 +34,21 @@ module SLA
         @now = now
       end
 
-      %i[issue_number issue_url issue_title package severity pr_url pr_state].each do |column|
+      %i[issue_number issue_url issue_title package pinned fix_version severity pr_url pr_state source
+         ecosystem devin_session_id].each do |column|
         define_method(column) { record[column] }
       end
 
       def versions
         "#{record[:pinned]} → #{record[:fix_version] || NO_FIX}"
+      end
+
+      def fix_version?
+        !record[:fix_version].nil?
+      end
+
+      def no_fix_text
+        NO_FIX
       end
 
       def filed
@@ -53,6 +64,10 @@ module SLA
         remaining.negative? ? "#{StatusPage.duration(-remaining)} ago" : "in #{StatusPage.duration(remaining)}"
       end
 
+      def overdue?
+        breached?
+      end
+
       def sla
         @sla ||= sla_word
       end
@@ -61,14 +76,22 @@ module SLA
         "sla-#{sla.tr(' ', '-')}"
       end
 
+      def sla_tag
+        "[#{sla.upcase}]"
+      end
+
+      def toggle_id
+        "f#{issue_number}"
+      end
+
       def breached?
         BREACHED_WORDS.include?(sla)
       end
 
       def devin
-        return NOT_DISPATCHED unless dispatched?
+        return NOT_DISPATCHED unless session?
 
-        record[:outcome] || record.values_at(:status, :status_detail).compact.join('/')
+        record[:outcome] || status_line
       end
 
       def devin_url
@@ -80,20 +103,57 @@ module SLA
       end
 
       def time_to_pr
-        return NONE unless record[:started_at] && record[:pr_notified_at]
+        return nil unless record[:started_at] && record[:pr_notified_at]
 
         StatusPage.duration(record[:pr_notified_at] - record[:started_at])
       end
 
       def acus
+        acus_reported? ? record[:acus_consumed].to_s : NOT_REPORTED
+      end
+
+      def acus_reported?
         acus_consumed = record[:acus_consumed]
-        acus_consumed.nil? || acus_consumed.zero? ? NOT_REPORTED : acus_consumed.to_s
+        !(acus_consumed.nil? || acus_consumed.zero?)
+      end
+
+      # "running/finished → settled", or just "running/finished" before the
+      # session has closed.
+      def session_status
+        record[:outcome] ? "#{status_line} → #{record[:outcome]}" : status_line
+      end
+
+      def started
+        record[:started_at] && StatusPage.time(record[:started_at])
+      end
+
+      def advisories
+        return nil unless record[:advisories]
+
+        list = JSON.parse(record[:advisories])
+        list.empty? ? nil : list.join(', ')
+      end
+
+      # The verification the session reported on its structured output: nil
+      # before a session has reported one, and REPORT_REJECTED when the report
+      # it sent failed schema validation.
+      def lockfile
+        return REPORT_REJECTED if record[:structured_output].nil? && record[:structured_output_invalid]
+        return nil unless record[:structured_output]
+
+        report = JSON.parse(record[:structured_output])
+        verification = report['verification'] || {}
+        "#{report['lockfile_route']} · #{verification['tool']} #{verification['clean'] ? 'clean' : 'not clean'}"
+      end
+
+      def session?
+        !record[:session_row_id].nil?
       end
 
       private
 
-      def dispatched?
-        !record[:session_row_id].nil?
+      def status_line
+        record.values_at(:status, :status_detail).compact.join('/')
       end
 
       def sla_word
@@ -104,7 +164,7 @@ module SLA
           (record[:pr_notified_at] || now) <= due_at ? 'met' : 'late'
         elsif now > due_at then 'breached'
         elsif record[:outcome] == Tracker::STALLED then 'stalled'
-        elsif dispatched? then 'in progress'
+        elsif session? then 'in progress'
         else 'waiting'
         end
       end

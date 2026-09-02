@@ -76,7 +76,7 @@ module SLA
       assert_equal 'running/working', row.devin
       assert_equal 'in 20h 25m', row.due_in
       assert_nil row.pr_url
-      assert_equal '—', row.time_to_pr
+      assert_nil row.time_to_pr
     end
 
     def test_waiting_when_nothing_has_been_dispatched_inside_the_window
@@ -144,9 +144,13 @@ module SLA
       assert_equal 'urllib3', row.package
       assert_equal '2.4.0 → no fix', row.versions
       assert_equal 'high', row.severity
+      assert_equal 'pip-audit', row.source
       assert_equal '2026-09-02 08:25 UTC', row.filed
       assert_equal '2026-09-04 08:25 UTC', row.due
       assert_equal 'in 20h 25m', row.due_in
+      assert_equal false, row.overdue?
+      assert_equal '[MET]', row.sla_tag
+      assert_equal 'f8', row.toggle_id
       assert_equal '18m 30s', row.time_to_pr
       assert_equal '1.25', row.acus
       assert_equal '2026-09-03 12:00 UTC', page.rendered_at
@@ -157,6 +161,17 @@ module SLA
       record_finding(1)
 
       assert_equal '2.4.0 → 2.7.0', page.rows.fetch(0).versions
+      assert page.rows.fetch(0).fix_version?
+    end
+
+    def test_no_fix_text_is_the_single_source_of_the_no_fix_label
+      record_finding(1, fix_version: nil)
+
+      row = page.rows.fetch(0)
+
+      refute row.fix_version?
+      assert_equal 'no fix', row.no_fix_text
+      assert_equal '2.4.0 → no fix', row.versions
     end
 
     def test_acus_are_not_reported_when_nil_or_zero
@@ -164,6 +179,13 @@ module SLA
       record_session(record_finding(2), acus_consumed: 0.0)
 
       assert_equal ['not reported', 'not reported'], page.rows.map(&:acus)
+      assert_equal [false, false], page.rows.map(&:acus_reported?)
+    end
+
+    def test_acus_reported_is_true_once_a_nonzero_value_is_recorded
+      record_session(record_finding(1), acus_consumed: 1.25)
+
+      assert page.rows.fetch(0).acus_reported?
     end
 
     def test_a_pull_request_whose_comment_is_being_retried_is_judged_by_now
@@ -172,7 +194,108 @@ module SLA
 
       assert_equal 'met', page.rows.fetch(0).sla
       assert_equal 'late', page(now: DUE + 1).rows.fetch(0).sla
-      assert_equal '—', page.rows.fetch(0).time_to_pr
+      assert_nil page.rows.fetch(0).time_to_pr
+    end
+
+    def test_overdue_is_true_once_the_due_date_has_passed
+      record_finding(1)
+
+      assert_equal true, page(now: DUE + 1).rows.fetch(0).overdue?
+      assert_equal false, page(now: DUE - 1).rows.fetch(0).overdue?
+    end
+
+    def test_overdue_depends_on_the_sla_word_not_only_on_the_clock
+      finding_id = record_finding(1)
+      record_session(finding_id, pr_url: 'https://github.com/x/y/pull/1', pr_state: 'open',
+                                 pr_notified_at: DUE - 3600, outcome: 'settled')
+
+      row = page(now: DUE + 3600).rows.fetch(0)
+
+      assert_equal 'met', row.sla
+      assert_equal false, row.overdue?
+    end
+
+    def test_sla_tag_is_the_uppercase_bracketed_sla_word
+      record_finding(1)
+
+      assert_equal '[WAITING]', page.rows.fetch(0).sla_tag
+
+      finding_id = record_finding(2)
+      record_session(finding_id, status: 'running', status_detail: 'working')
+
+      assert_equal '[IN PROGRESS]', page.rows.fetch(1).sla_tag
+    end
+
+    def test_advisories_are_comma_joined_and_nil_when_absent
+      finding_id = record_finding(1)
+      DB[:findings].where(id: finding_id).update(advisories: '["GHSA-a", "GHSA-b"]')
+
+      assert_equal 'GHSA-a, GHSA-b', page.rows.fetch(0).advisories
+
+      DB[:findings].where(id: finding_id).update(advisories: nil)
+
+      assert_nil page.rows.fetch(0).advisories
+    end
+
+    def test_lockfile_reads_the_structured_output_and_is_nil_before_a_report
+      finding_id = record_finding(1)
+      record_session(finding_id, structured_output: JSON.generate(
+        lockfile_route: 'direct_edit', verification: { tool: 'pip-audit', clean: true }
+      ))
+
+      assert_equal 'direct_edit · pip-audit clean', page.rows.fetch(0).lockfile
+
+      finding_id2 = record_finding(2)
+      record_session(finding_id2)
+
+      assert_nil page.rows.find { |row| row.issue_number == 2 }.lockfile
+    end
+
+    def test_lockfile_reports_not_clean_when_verification_failed
+      finding_id = record_finding(1)
+      record_session(finding_id, structured_output: JSON.generate(
+        lockfile_route: 'recompile', verification: { tool: 'pip-audit', clean: false }
+      ))
+
+      assert_equal 'recompile · pip-audit not clean', page.rows.fetch(0).lockfile
+    end
+
+    def test_lockfile_reports_a_rejected_report_when_the_schema_did_not_validate
+      finding_id = record_finding(1)
+      record_session(finding_id, structured_output: nil, structured_output_invalid: JSON.generate(package: 'urllib3'))
+
+      assert_equal 'report rejected (schema)', page.rows.fetch(0).lockfile
+    end
+
+    def test_session_status_reads_status_slash_detail_and_the_outcome
+      finding_id = record_finding(1)
+      record_session(finding_id, status: 'running', status_detail: 'finished', outcome: 'settled')
+
+      assert_equal 'running/finished → settled', page.rows.fetch(0).session_status
+    end
+
+    def test_session_status_omits_the_outcome_before_the_session_closes
+      finding_id = record_finding(1)
+      record_session(finding_id, status: 'running', status_detail: 'working')
+
+      assert_equal 'running/working', page.rows.fetch(0).session_status
+    end
+
+    def test_session_helpers_reflect_whether_a_session_was_dispatched
+      record_finding(1)
+
+      refute page.rows.fetch(0).session?
+      assert_nil page.rows.fetch(0).started
+      assert_nil page.rows.fetch(0).time_to_pr
+
+      finding_id = record_finding(2)
+      record_session(finding_id, pr_notified_at: Time.utc(2026, 9, 2, 8, 44, 0))
+
+      row = page.rows.find { |r| r.issue_number == 2 }
+
+      assert row.session?
+      assert_equal '2026-09-02 08:25 UTC', row.started
+      refute_nil row.time_to_pr
     end
 
     def test_duration_reads_in_seconds_minutes_hours_or_days

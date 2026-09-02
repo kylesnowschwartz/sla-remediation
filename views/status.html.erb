@@ -10,176 +10,221 @@
     body {
       margin: 0 auto;
       max-width: var(--shell);
-      padding: var(--page-pad);
+      padding: var(--sp-24) var(--page-pad);
       background: var(--bg);
       color: var(--body);
-      font-family: var(--font-prose);
-      font-size: var(--text-body);
+      font-family: var(--font-data);
+      font-size: var(--text-meta);
       font-weight: var(--weight-normal);
-      line-height: var(--leading-normal);
+      line-height: var(--leading-snug);
+      font-variant-numeric: tabular-nums;
     }
     header {
       display: flex;
       flex-wrap: wrap;
+      justify-content: space-between;
       align-items: baseline;
-      gap: var(--sp-16);
-      margin-bottom: var(--sp-24);
+      gap: var(--sp-8) var(--sp-16);
+      padding-bottom: var(--sp-8);
+      border-bottom: var(--hairline) solid var(--line-strong);
+      margin-bottom: var(--sp-12);
     }
     h1 {
       margin: 0;
-      font-family: var(--font-display);
-      font-size: var(--text-h1);
-      font-weight: var(--weight-bold);
-      line-height: var(--leading-tight);
-      letter-spacing: var(--track-display);
-    }
-    .rendered-at {
       font-family: var(--font-data);
-      font-size: var(--text-meta);
-      color: var(--muted);
+      font-size: var(--text-body);
+      font-weight: var(--weight-bold);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
     }
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--w-rail)), 1fr));
-      gap: var(--sp-16);
-      margin-bottom: var(--sp-24);
+    .rendered-at { color: var(--muted); }
+    .summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--sp-4) var(--sp-24);
+      margin-bottom: var(--sp-16);
     }
-    .stat {
-      background: var(--surface);
-      border: var(--hairline) solid var(--line);
-      border-radius: var(--r-8);
-      padding: var(--sp-16);
-    }
-    .stat .count {
-      font-size: var(--text-h2);
-      line-height: var(--leading-tight);
-    }
-    .stat .label {
-      font-size: var(--text-meta);
-      color: var(--muted);
-    }
+    .summary b { font-weight: var(--weight-bold); }
+    .summary .label { color: var(--muted); }
+    .summary .breached-count { color: var(--critical); }
     .scroll-x { overflow-x: auto; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-    }
+    table { width: 100%; border-collapse: collapse; }
     th, td {
-      padding: var(--sp-8) var(--sp-12);
-      font-size: var(--text-meta);
-      line-height: var(--leading-snug);
+      padding: var(--sp-4) var(--sp-12) var(--sp-4) 0;
       text-align: left;
       vertical-align: top;
-      overflow-wrap: anywhere;
+      white-space: nowrap;
       border-bottom: var(--hairline) solid var(--line);
     }
     th {
       font-weight: var(--weight-bold);
-      border-bottom-color: var(--line-strong);
-    }
-    th, td.tabular, td .tabular, td.devin, .sla { white-space: nowrap; }
-    .issue { min-width: var(--w-rail); }
-    .num { text-align: right; }
-    .sla {
-      display: inline-block;
-      padding: var(--sp-2) var(--sp-8);
-      border: var(--hairline) solid;
-      border-radius: var(--r-full);
-      font-family: var(--font-data);
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
       font-size: var(--text-meta-data);
-      color: var(--body);
+      border-bottom: var(--hairline) solid var(--line-strong);
     }
-    .sla-met { background: var(--positive-soft); border-color: var(--positive-solid); }
-    .sla-in-progress, .sla-waiting { background: var(--warning-soft); border-color: var(--warning-solid); }
-    .sla-breached, .sla-late { background: var(--critical-soft); border-color: var(--critical-solid); }
-    .sla-stalled { background: var(--surface); border-color: var(--line-strong); }
-    a {
-      color: var(--accent);
-      text-decoration: none;
+    .num { text-align: right; }
+    .muted { color: var(--muted); }
+    .sev-critical, .sev-high { color: var(--critical); font-weight: var(--weight-bold); }
+    .sev-medium { color: var(--warning); }
+    .sev-low { color: var(--muted); }
+    .tag { font-weight: var(--weight-bold); }
+    .sla-met { color: var(--positive); }
+    .sla-in-progress, .sla-waiting { color: var(--warning); }
+    .sla-breached, .sla-late { color: var(--critical); }
+    .sla-stalled { color: var(--muted); }
+    .overdue { color: var(--critical); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-hover); text-decoration: underline; }
+    footer { margin-top: var(--sp-16); color: var(--muted); font-size: var(--text-meta-data); }
+
+    /* Expand / collapse: a hidden checkbox in the first cell, no script. */
+    td.toggle { width: var(--sp-24); padding-right: var(--sp-4); }
+    td.toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+    td.toggle label {
+      display: inline-block;
+      min-width: var(--sp-24);
+      min-height: var(--sp-24);
+      line-height: var(--sp-24);
+      text-align: center;
+      cursor: pointer;
+      color: var(--muted);
+      user-select: none;
     }
-    a:hover {
-      color: var(--accent-hover);
-      text-decoration: underline;
+    td.toggle label::before { content: "▸"; }
+    td.toggle label:focus-visible {
+      outline: var(--hairline) solid var(--accent);
+      outline-offset: var(--sp-2);
     }
+    tr:has(input:checked) td.toggle label::before { content: "▾"; }
+    tr:has(input:checked) td { border-bottom-color: transparent; }
+    tr.detail { display: none; }
+    tr:has(input:checked) + tr.detail { display: table-row; }
+    tr.detail td {
+      padding: 0 0 var(--sp-8) var(--sp-24);
+      white-space: normal;
+      background: var(--surface);
+    }
+    tr.detail dl {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: var(--sp-2) var(--sp-16);
+      margin: 0;
+      padding: var(--sp-8) var(--sp-12);
+      font-size: var(--text-meta-data);
+    }
+    tr.detail dt { color: var(--muted); margin: 0; }
+    tr.detail dd { margin: 0; overflow-wrap: anywhere; }
   </style>
 </head>
 <body>
   <%= erb :_theme %>
   <header>
-    <h1><%= h @page.repo %> Security SLA</h1>
-    <span class="rendered-at">rendered <%= h @page.rendered_at %></span>
+    <h1><%= h @page.repo %> &middot; security SLA</h1>
+    <span class="rendered-at">rendered <%= h @page.rendered_at %> &middot; reloads every 15s</span>
   </header>
 
-  <section class="stats">
-    <div class="stat">
-      <div class="count tabular"><%= h @page.summary.findings %></div>
-      <div class="label">findings tracked</div>
-    </div>
-    <div class="stat">
-      <div class="count tabular"><%= h @page.summary.pull_requests_open %></div>
-      <div class="label">pull requests open</div>
-    </div>
-    <div class="stat">
-      <div class="count tabular"><%= h @page.summary.inside_sla %></div>
-      <div class="label">inside SLA window</div>
-    </div>
-    <div class="stat">
-      <div class="count tabular"><%= h @page.summary.breached %></div>
-      <div class="label">SLA breached</div>
-    </div>
-  </section>
+  <div class="summary">
+    <span><b><%= h @page.summary.findings %></b> <span class="label">findings</span></span>
+    <span><b><%= h @page.summary.pull_requests_open %></b> <span class="label">PRs open</span></span>
+    <span><b><%= h @page.summary.inside_sla %></b> <span class="label">inside SLA</span></span>
+    <span><b class="breached-count"><%= h @page.summary.breached %></b> <span class="label">breached</span></span>
+  </div>
 
   <div class="scroll-x">
-    <table>
-      <thead>
+  <table>
+    <thead>
+      <tr>
+        <th></th>
+        <th>Issue</th>
+        <th>Package</th>
+        <th>Sev</th>
+        <th>Due</th>
+        <th>SLA</th>
+        <th>Devin</th>
+        <th>PR</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% @page.rows.each do |row| %>
         <tr>
-          <th class="issue">Issue</th>
-          <th>Package</th>
-          <th>Severity</th>
-          <th>Filed</th>
-          <th>Due</th>
-          <th>SLA</th>
-          <th>Devin</th>
-          <th>Pull request</th>
-          <th class="num" title="From the session start to the pull request as first seen by the tracker">Time to PR</th>
-          <th class="num">ACUs</th>
+          <td class="toggle">
+            <input type="checkbox" id="<%= h row.toggle_id %>">
+            <label for="<%= h row.toggle_id %>" aria-label="show details for #<%= h row.issue_number %>"></label>
+          </td>
+          <td>
+            <% if row.issue_url %>
+              <a href="<%= h row.issue_url %>">#<%= h row.issue_number %></a>
+            <% else %>
+              #<%= h row.issue_number %>
+            <% end %>
+          </td>
+          <td>
+            <%= h row.package %>
+            <% if row.fix_version? %>
+              <%= h row.versions %>
+            <% else %>
+              <%= h row.pinned %> &rarr; <span class="muted"><%= h row.no_fix_text %></span>
+            <% end %>
+          </td>
+          <td class="<%= h "sev-#{row.severity}" %>"><%= h row.severity %></td>
+          <td>
+            <%= h row.due %>
+            <% if row.overdue? %>
+              <span class="overdue"><%= h row.due_in %></span>
+            <% else %>
+              <span class="muted"><%= h row.due_in %></span>
+            <% end %>
+          </td>
+          <td class="tag <%= h row.sla_class %>"><%= h row.sla_tag %></td>
+          <td>
+            <% if row.devin_url %>
+              <a href="<%= h row.devin_url %>"><%= h row.devin %></a>
+            <% else %>
+              <%= h row.devin %>
+            <% end %>
+          </td>
+          <td>
+            <% if row.pr_url %>
+              <a href="<%= h row.pr_url %>">#<%= h row.pr_number %></a>
+            <% end %>
+            <span class="muted"><% if row.pr_url %><%= h row.pr_state %><% else %>&mdash;<% end %></span>
+          </td>
         </tr>
-      </thead>
-      <tbody>
-        <% @page.rows.each do |row| %>
-          <tr>
-            <td class="issue">
-              <% if row.issue_url %>
-                <a class="tabular" href="<%= h row.issue_url %>">#<%= h row.issue_number %></a>
-              <% else %>
-                <span class="tabular">#<%= h row.issue_number %></span>
-              <% end %>
-              <%= h row.issue_title %>
-            </td>
-            <td><%= h row.package %> <span class="tabular"><%= h row.versions %></span></td>
-            <td><%= h row.severity %></td>
-            <td class="tabular"><%= h row.filed %></td>
-            <td class="tabular"><%= h row.due %> <%= h row.due_in %></td>
-            <td><span class="sla <%= h row.sla_class %>"><%= h row.sla %></span></td>
-            <td class="devin">
-              <% if row.devin_url %>
-                <a href="<%= h row.devin_url %>"><%= h row.devin %></a>
-              <% else %>
-                <%= h row.devin %>
-              <% end %>
-            </td>
-            <td>
-              <% if row.pr_url %>
-                <a class="tabular" href="<%= h row.pr_url %>">#<%= h row.pr_number %></a> [<%= h row.pr_state %>]
-              <% else %>
-                —
-              <% end %>
-            </td>
-            <td class="num tabular"><%= h row.time_to_pr %></td>
-            <td class="num tabular"><%= h row.acus %></td>
-          </tr>
-        <% end %>
-      </tbody>
-    </table>
+        <tr class="detail"><td colspan="8"><dl>
+          <dt>title</dt><dd><%= h row.issue_title %></dd>
+          <dt>filed</dt><dd><%= h row.filed %></dd>
+          <% if row.advisories %>
+            <dt>advisories</dt><dd><%= h row.advisories %></dd>
+          <% end %>
+          <% if row.source %>
+            <dt>source</dt><dd><%= h row.source %></dd>
+          <% end %>
+          <dt>session</dt>
+          <% if row.devin_url %>
+            <dd><a href="<%= h row.devin_url %>"><%= h row.devin_session_id %></a> &middot; <%= h row.session_status %></dd>
+          <% else %>
+            <dd class="muted">none</dd>
+          <% end %>
+          <% if row.started %>
+            <dt>started</dt><dd><%= h row.started %></dd>
+          <% end %>
+          <% if row.time_to_pr %>
+            <dt>time to PR</dt><dd><%= h row.time_to_pr %> <span class="muted">as first seen by the tracker</span></dd>
+          <% end %>
+          <% if row.session? && row.acus_reported? %>
+            <dt>ACUs</dt><dd><%= h row.acus %></dd>
+          <% elsif row.session? %>
+            <dt>ACUs</dt><dd class="muted"><%= h row.acus %></dd>
+          <% end %>
+          <% if row.lockfile %>
+            <dt>lockfile</dt><dd><%= h row.lockfile %></dd>
+          <% end %>
+        </dl></td></tr>
+      <% end %>
+    </tbody>
+  </table>
   </div>
 </body>
 </html>

@@ -98,17 +98,59 @@ and its state, or a dash when there is none.
 Proof: test/status_page_test.rb test_met_when_the_pull_request_was_seen_before_the_due_date;
 test/app_test.rb test_status_page_lists_the_findings_and_refreshes_itself
 
-**PAGE-19** THE time-to-PR cell SHALL show the duration from the session's
-start to the tracker's first sighting of the pull request, or a dash when
-either time is missing.
+**PAGE-19** THE detail row SHALL show the duration from the session's start
+to the tracker's first sighting of the pull request, omitting the line
+entirely when either time is missing.
 Proof: test/status_page_test.rb test_row_strings_are_formatted_for_the_template,
 test_in_progress_when_a_session_exists_without_a_pull_request_inside_the_window,
 test_a_pull_request_whose_comment_is_being_retried_is_judged_by_now
 
-**PAGE-20** THE ACUs cell SHALL show the recorded value, or `not reported`
-when it is absent or exactly 0.0.
+**PAGE-20** IF the finding has a session, THEN the detail row SHALL show
+the ACUs consumed, or `not reported` when it is absent or exactly 0.0; IF
+there is no session, THEN the line SHALL be omitted.
 Proof: test/status_page_test.rb test_acus_are_not_reported_when_nil_or_zero,
-test_row_strings_are_formatted_for_the_template
+test_acus_reported_is_true_once_a_nonzero_value_is_recorded,
+test_row_strings_are_formatted_for_the_template;
+test/app_test.rb test_status_page_lists_the_findings_and_refreshes_itself
+
+## The detail row
+
+**PAGE-21** THE page SHALL show, under each finding's row, one detail row
+that starts collapsed and expands only once its toggle is activated.
+Proof: test/app_test.rb test_status_page_lists_the_findings_and_refreshes_itself
+
+**PAGE-22** THE detail row SHALL always show the finding's title and the
+time it was filed.
+Proof: test/app_test.rb test_status_page_lists_the_findings_and_refreshes_itself;
+test/status_page_test.rb test_row_strings_are_formatted_for_the_template
+
+**PAGE-23** IF the finding has advisories, THEN the detail row SHALL show
+them comma-joined; IF it has none, THEN the line SHALL be omitted.
+Proof: test/status_page_test.rb test_advisories_are_comma_joined_and_nil_when_absent
+
+**PAGE-24** IF the finding has a source, THEN the detail row SHALL show it.
+Proof: test/status_page_test.rb test_row_strings_are_formatted_for_the_template
+
+**PAGE-25** IF the finding has a session, THEN the detail row SHALL show
+the session id linked to the Devin session and `<status>/<status_detail>`,
+followed by `→ <outcome>` once the session has closed; IF it has none,
+THEN the line SHALL read `none`.
+Proof: test/status_page_test.rb test_session_status_reads_status_slash_detail_and_the_outcome,
+test_session_status_omits_the_outcome_before_the_session_closes;
+test/app_test.rb test_status_page_lists_the_findings_and_refreshes_itself
+
+**PAGE-26** IF the session has started, THEN the detail row SHALL show the
+time it started; IF it has not, THEN the line SHALL be omitted.
+Proof: test/status_page_test.rb test_session_helpers_reflect_whether_a_session_was_dispatched
+
+**PAGE-27** IF the session reported structured output that matched its
+schema, THEN the detail row SHALL show the lockfile route and the
+verification tool's clean or not-clean result; IF the session reported
+structured output that failed schema validation, THEN it SHALL show
+`report rejected (schema)`; IF neither, THEN the line SHALL be omitted.
+Proof: test/status_page_test.rb test_lockfile_reads_the_structured_output_and_is_nil_before_a_report,
+test_lockfile_reports_not_clean_when_verification_failed,
+test_lockfile_reports_a_rejected_report_when_the_schema_did_not_validate
 
 ## Unproven
 

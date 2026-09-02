@@ -35,15 +35,24 @@ module SLA
       assert_includes body, '<meta http-equiv="refresh" content="15">'
       assert_includes body, '<link rel="stylesheet" href="/house-style.css">'
       assert_includes body, "localStorage.getItem('theme')"
-      assert_includes body, '<h1>kylesnowschwartz/superset Security SLA</h1>'
+      assert_includes body, '<h1>kylesnowschwartz/superset &middot; security SLA</h1>'
       assert_includes body, 'href="https://github.com/kylesnowschwartz/superset/issues/8">#8</a>'
       assert_includes body, 'href="https://github.com/kylesnowschwartz/superset/issues/12">#12</a>'
       assert_includes body, '[SLA high] urllib3 2.4.0 → 2.7.0'
       assert_includes body, 'href="https://app.devin.ai/sessions/812ce7c3f89f4e88bce68dc03c9dd462">settled</a>'
-      assert_includes body, 'href="https://github.com/kylesnowschwartz/superset/pull/9">#9</a> [open]'
-      assert_includes body, '<span class="sla sla-met">met</span>'
-      assert_includes body, '<span class="sla sla-waiting">waiting</span>'
+      assert_includes body, 'href="https://github.com/kylesnowschwartz/superset/pull/9">#9</a>'
+      pr_link = 'href="https://github.com/kylesnowschwartz/superset/pull/9">#9</a>'
+      assert_match(%r{#{Regexp.escape(pr_link)}\s*<span class="muted">open</span>}, body)
+      assert_includes body, 'class="tag sla-met">[MET]</td>'
+      assert_includes body, 'class="tag sla-waiting">[WAITING]</td>'
       assert_includes body, 'not dispatched'
+      assert_equal 2, body.scan('class="detail"').size
+      assert_includes body, 'id="f8"'
+      assert_includes body, 'id="f12"'
+      refute_match(/type="checkbox" id="f\d+" checked/, body)
+      assert_equal 2, body.scan('<dt>title</dt>').size
+      assert_equal 2, body.scan('<dt>filed</dt>').size
+      assert_equal 1, body.scan('<dt>ACUs</dt>').size
     end
 
     def test_house_style_is_served
