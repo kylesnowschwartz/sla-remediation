@@ -11,9 +11,14 @@
 # without them nothing is posted.
 
 require 'bundler/setup'
+require 'logger'
 require 'optparse'
 
-require_relative '../lib/sla/boot'
+require_relative '../lib/sla/db'
+require_relative '../lib/sla/devin_client'
+require_relative '../lib/sla/github_client'
+require_relative '../lib/sla/notifier'
+require_relative '../lib/sla/tracker'
 
 REQUIRED_ENV = %w[DEVIN_SERVICE_API_KEY_V3 DEVIN_ORG_ID].freeze
 INTERVAL_SECONDS = 15
@@ -30,14 +35,21 @@ unless missing.empty?
   exit 1
 end
 
-tracker = SLA::Tracker.new(db: SLA::DB, devin: SLA::DevinClient.new, notifier: SLA::Boot.notifier,
-                           log: Logger.new($stderr))
+notifier =
+  if ENV['SLA_GITHUB_TOKEN'].to_s.empty?
+    SLA::Notifier::Null.new
+  else
+    SLA::Notifier::IssueComment.new(github: SLA::GitHubClient.new(token: ENV.fetch('SLA_GITHUB_TOKEN')),
+                                    repo: ENV.fetch('SLA_REPO'))
+  end
+
+tracker = SLA::Tracker.new(db: SLA::DB, devin: SLA::DevinClient.new, notifier: notifier, log: Logger.new($stderr))
+summary_line = ->(summary) { summary.map { |key, value| "#{key}=#{value}" }.join(' ') }
 
 unless loop_forever
-  puts SLA::Tracker.summary_line(tracker.poll_once)
+  puts summary_line.call(tracker.poll_once)
   exit 0
 end
 
-stop = Queue.new
-%w[INT TERM].each { |signal| trap(signal) { stop << :stop } }
-tracker.run(interval: INTERVAL_SECONDS, stop: stop) { |summary| puts SLA::Tracker.summary_line(summary) }
+%w[INT TERM].each { |signal| trap(signal) { exit } }
+tracker.run(interval: INTERVAL_SECONDS) { |summary| puts summary_line.call(summary) }

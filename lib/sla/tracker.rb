@@ -19,13 +19,7 @@ module SLA
   class Tracker
     SETTLED = 'settled'
     STALLED = 'stalled'
-    WAITING_FOR_APPROVAL = 'waiting_for_approval'
     EMPTY_SUMMARY = { polled: 0, settled: 0, stalled: 0, notified: 0, errors: 0 }.freeze
-
-    # A summary as one "key=value" line.
-    def self.summary_line(summary)
-      summary.map { |key, value| "#{key}=#{value}" }.join(' ')
-    end
 
     def initialize(db:, devin:, notifier:, schema: RemediationPrompt.schema, log: Logger.new($stdout))
       @db = db
@@ -48,13 +42,13 @@ module SLA
       summary
     end
 
-    # Polls every `interval` seconds until something is pushed onto `stop` (a
-    # Queue), yielding each round's summary. Stopping interrupts the wait.
-    def run(stop:, interval: 15)
+    # Polls forever, sleeping `interval` seconds between rounds and yielding
+    # each round's summary.
+    def run(interval: 15)
       loop do
         summary = poll_once
         yield summary if block_given?
-        break if stop.closed? || stop.pop(timeout: interval)
+        sleep interval
       end
     end
 
@@ -69,18 +63,23 @@ module SLA
 
     # Writes what the session shows onto the row and returns the row as updated.
     def record(row, session)
-      changes = observed(row, session).merge(report(row, session))
-      warn_waiting_for_approval(row, session) if changes[:status_detail] == WAITING_FOR_APPROVAL
+      changes = observed(session).merge(report(row, session))
+      log_status_change(row, session)
       sessions.where(id: row[:id]).update(changes)
       row.merge(changes)
     end
 
-    def observed(row, session)
-      changes = { status: session.status, status_detail: session.status_detail, acus_consumed: session.acus_consumed,
-                  last_polled_at: Time.now.utc, poll_count: row[:poll_count] + 1 }
+    def observed(session)
       pull = session.pull_requests.first
-      changes.merge!(pr_url: pull.pr_url, pr_state: pull.pr_state) if pull
-      changes
+      { status: session.status, status_detail: session.status_detail, acus_consumed: session.acus_consumed,
+        last_polled_at: Time.now.utc, pr_url: pull&.pr_url, pr_state: pull&.pr_state }.compact
+    end
+
+    def log_status_change(row, session)
+      return if row.values_at(:status, :status_detail) == [session.status, session.status_detail]
+
+      @log.info("tracker issue ##{issue_number(row)}: session #{session.session_id} is now " \
+                "#{session.status}/#{session.status_detail}")
     end
 
     # The structured output as JSON text, under structured_output when it matches
@@ -97,19 +96,22 @@ module SLA
       { structured_output_invalid: JSON.generate(output) }
     end
 
-    def warn_waiting_for_approval(row, session)
-      return if row[:status_detail] == WAITING_FOR_APPROVAL
-
-      @log.warn("tracker issue ##{issue_number(row)}: session #{session.session_id} is waiting for approval")
-    end
-
+    # Writes pr_notified_at before posting the comment and clears it again if
+    # the post fails, so the row is retried next round.
     def notify(row, summary)
       finding = findings.first(id: row[:finding_id])
-      @db.transaction do
-        @notifier.pr_opened(finding, row)
-        sessions.where(id: row[:id]).update(pr_notified_at: Time.now.utc)
-      end
+      @db.transaction { sessions.where(id: row[:id]).update(pr_notified_at: Time.now.utc) }
+      post_comment(finding, row)
       summary[:notified] += 1
+    end
+
+    def post_comment(finding, row)
+      @notifier.pr_opened(finding, row)
+    rescue StandardError => e
+      sessions.where(id: row[:id]).update(pr_notified_at: nil)
+      @log.error("tracker issue ##{finding[:issue_number]}: posting the pull request comment failed: " \
+                 "#{e.class}: #{e.message}")
+      raise
     end
 
     def close(row, session, summary)

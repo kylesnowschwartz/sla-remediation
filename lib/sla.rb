@@ -16,7 +16,6 @@ require_relative 'sla/dispatcher'
 require_relative 'sla/notifier'
 require_relative 'sla/tracker'
 require_relative 'sla/db'
-require_relative 'sla/boot'
 require_relative 'sla/app'
 
 module SLA

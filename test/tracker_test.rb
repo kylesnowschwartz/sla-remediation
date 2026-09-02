@@ -15,7 +15,7 @@ module SLA
     SUSPENDED_ID = '18fc67a110a9424ebf9561ebfba3757b'
     WORKING_ID = 'aaaa0000000000000000000000000001'
     STALLED_ID = 'aaaa0000000000000000000000000002'
-    APPROVAL_ID = 'aaaa0000000000000000000000000003'
+    CHANGING_ID = 'aaaa0000000000000000000000000003'
 
     # Records every pr_opened call.
     class SpyNotifier
@@ -51,7 +51,6 @@ module SLA
       assert_equal 'running', row[:status]
       assert_equal 'waiting_for_user', row[:status_detail]
       assert_in_delta 0.0, row[:acus_consumed]
-      assert_equal 1, row[:poll_count]
       assert_in_delta Time.now.utc, row[:last_polled_at], 5
       assert_equal 'https://github.com/kylesnowschwartz/superset/pull/9', row[:pr_url]
       assert_equal 'open', row[:pr_state]
@@ -70,12 +69,11 @@ module SLA
       assert_equal 8, finding_row[:issue_number]
       assert_equal SETTLED_ID, session_row[:devin_session_id]
       assert_equal 'https://github.com/kylesnowschwartz/superset/pull/9', session_row[:pr_url]
-      assert_empty @log_io.string
+      refute_match(/WARN|ERROR/, @log_io.string)
 
       assert_equal({ polled: 0, settled: 0, stalled: 0, notified: 0, errors: 0 }, @tracker.poll_once)
       assert_requested :get, "#{SESSIONS_URL}/#{SETTLED_ID}", times: 1
       assert_equal 1, @notifier.calls.size
-      assert_equal 1, DB[:sessions].first(id: row_id)[:poll_count]
     end
 
     def test_output_of_another_shape_is_kept_as_invalid_with_a_warning
@@ -118,7 +116,7 @@ module SLA
       assert_nil row[:structured_output]
       assert_nil row[:structured_output_invalid]
       assert_equal 1, @notifier.calls.size
-      assert_empty @log_io.string
+      refute_match(/WARN|ERROR/, @log_io.string)
     end
 
     def test_working_session_stays_open
@@ -133,15 +131,12 @@ module SLA
       assert_nil row[:outcome]
       assert_equal 'running', row[:status]
       assert_equal 'working', row[:status_detail]
-      assert_equal 1, row[:poll_count]
       assert_nil row[:pr_url]
       assert_nil row[:finished_at]
       assert_empty @notifier.calls
-      assert_empty @log_io.string
+      refute_match(/WARN|ERROR/, @log_io.string)
 
-      @tracker.poll_once
-
-      assert_equal 2, DB[:sessions].first(id: row_id)[:poll_count]
+      assert_equal({ polled: 1, settled: 0, stalled: 0, notified: 0, errors: 0 }, @tracker.poll_once)
       assert_requested :get, "#{SESSIONS_URL}/#{WORKING_ID}", times: 2
     end
 
@@ -163,20 +158,26 @@ module SLA
       assert_requested :get, "#{SESSIONS_URL}/#{STALLED_ID}", times: 1
     end
 
-    def test_waiting_for_approval_stays_open_and_warns_once
-      row_id = record_session(7, APPROVAL_ID)
-      stub_session(APPROVAL_ID, hand_written(APPROVAL_ID, status: 'running', status_detail: 'waiting_for_approval'))
+    def test_a_status_change_is_logged_once
+      row_id = record_session(7, CHANGING_ID)
+      stub_session(CHANGING_ID, hand_written(CHANGING_ID, status: 'running', status_detail: 'working'))
 
-      assert_equal({ polled: 1, settled: 0, stalled: 0, notified: 0, errors: 0 }, @tracker.poll_once)
+      @tracker.poll_once
+      @tracker.poll_once
+
+      assert_equal 1, @log_io.string.scan(%r{INFO.*issue #7: session #{CHANGING_ID} is now running/working}).size
+
+      stub_session(CHANGING_ID, hand_written(CHANGING_ID, status: 'running', status_detail: 'waiting_for_approval'))
+      @tracker.poll_once
+      @tracker.poll_once
+
+      assert_equal 1, @log_io.string.scan(%r{issue #7: session #{CHANGING_ID} is now running/waiting_for_approval}).size
+      assert_equal 2, @log_io.string.scan('INFO').size
       row = DB[:sessions].first(id: row_id)
 
       assert_nil row[:outcome]
       assert_equal 'waiting_for_approval', row[:status_detail]
-      assert_equal 1, @log_io.string.scan(/WARN.*issue #7: session #{APPROVAL_ID} is waiting for approval/).size
-
-      assert_equal({ polled: 1, settled: 0, stalled: 0, notified: 0, errors: 0 }, @tracker.poll_once)
-      assert_equal 2, DB[:sessions].first(id: row_id)[:poll_count]
-      assert_equal 1, @log_io.string.scan('waiting for approval').size
+      assert_requested :get, "#{SESSIONS_URL}/#{CHANGING_ID}", times: 4
       assert_empty @notifier.calls
     end
 
@@ -194,28 +195,34 @@ module SLA
       failing = DB[:sessions].first(id: failing_id)
 
       assert_nil failing[:outcome]
-      assert_equal 0, failing[:poll_count]
+      assert_equal 'new', failing[:status]
       assert_match(/ERROR.*session #{WORKING_ID}: SLA::DevinAPIError: Devin API returned 503/, @log_io.string)
       assert_equal 1, @notifier.calls.size
     end
 
-    def test_a_failed_notification_leaves_the_row_open_and_unnotified
+    def test_a_failed_notification_clears_the_timestamp_and_leaves_the_row_open
       row_id = record_session(8, SETTLED_ID)
       stub_session(SETTLED_ID, fixture('get_session_settled_with_pr_and_output.json'))
+      seen = []
       failing = Object.new
-      failing.define_singleton_method(:pr_opened) { |*| raise GitHubAPIError.new(status: 502, body: 'bad gateway') }
+      failing.define_singleton_method(:pr_opened) do |_finding, session_row|
+        seen << DB[:sessions].first(id: session_row[:id])[:pr_notified_at]
+        raise GitHubAPIError.new(status: 502, body: 'bad gateway')
+      end
       tracker = Tracker.new(db: DB, devin: DevinClient.new(api_key: 'test-key', org_id: ORG_ID), notifier: failing,
                             log: Logger.new(@log_io))
 
       summary = tracker.poll_once
 
       assert_equal({ polled: 1, settled: 0, stalled: 0, notified: 0, errors: 1 }, summary)
+      assert_in_delta Time.now.utc, seen.fetch(0), 5
       row = DB[:sessions].first(id: row_id)
 
       assert_nil row[:outcome]
       assert_nil row[:pr_notified_at]
       assert_equal 'https://github.com/kylesnowschwartz/superset/pull/9', row[:pr_url]
-      assert_equal 1, row[:poll_count]
+      assert_match(/ERROR.*issue #8: posting the pull request comment failed: SLA::GitHubAPIError/, @log_io.string)
+      assert_match(/ERROR.*session #{SETTLED_ID}: SLA::GitHubAPIError/, @log_io.string)
     end
 
     def test_rows_without_a_devin_session_id_are_skipped
@@ -226,19 +233,17 @@ module SLA
       assert_not_requested :get, /api\.devin\.ai/
     end
 
-    def test_run_polls_until_stopped_and_yields_each_summary
+    def test_run_polls_and_yields_each_summary_between_sleeps
       record_session(5, WORKING_ID)
       stub_session(WORKING_ID, hand_written(WORKING_ID, status: 'running', status_detail: 'working'))
-      stop = Queue.new
       summaries = []
 
-      thread = Thread.new do
-        @tracker.run(interval: 60, stop: stop) { |summary| summaries << summary }
-      end
+      thread = Thread.new { @tracker.run(interval: 60) { |summary| summaries << summary } }
       Thread.pass until summaries.size == 1
-      stop << :stop
+      Thread.pass until thread.status == 'sleep'
+      thread.kill
+      thread.join
 
-      assert thread.join(5), 'run did not stop within 5 seconds'
       assert_equal [{ polled: 1, settled: 0, stalled: 0, notified: 0, errors: 0 }], summaries
       assert_requested :get, "#{SESSIONS_URL}/#{WORKING_ID}", times: 1
     end
