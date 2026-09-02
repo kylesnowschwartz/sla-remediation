@@ -1,0 +1,12 @@
+# Pins in requirements/base.txt of the demo fork that demo-reset puts back to
+# a version with a known vulnerability. "upstream" is the fork's own value and
+# is here only so a reader can see what the demo changed.
+repo_file: requirements/base.txt
+branch: master
+packages:
+  urllib3:
+    seeded: "2.4.0"
+    upstream: "2.7.0"
+  requests:
+    seeded: "2.31.0"
+    upstream: "2.33.0"

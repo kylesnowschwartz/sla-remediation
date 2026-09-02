@@ -74,3 +74,15 @@ A structured output that does not match `schemas/remediation_result.json` is kep
 - `waiting` — no pull request, no session, and the due date has not passed.
 
 ACUs read `not reported` when the API returns nil or 0.0: this organisation's usage is not metered through the API, so 0.0 does not mean free; the time-to-PR column is the cost signal for now.
+
+## Resetting the demo
+
+One run of the pipeline leaves the fork with open `sla-remediation` issues, a Devin pull request from a `fix/...` branch, and a bumped pin, and leaves the local database with the findings and sessions. `bin/demo-reset` (`SLA::DemoReset`, `lib/sla/demo_reset.rb`) undoes all of it, in this order, printing one line per thing done or skipped: closes (without merging) every open pull request whose head branch starts with `fix/` and deletes the branch; comments on and closes every open issue labeled `sla-remediation` (issues with other labels, including the `policy` issue, are never touched); puts the pins in `demo/seeds.yml` back to their seeded vulnerable versions in `requirements/base.txt` on `master` in one commit, or skips the commit when they already have those values; and deletes every `sessions` row, then every `findings` row. It does not run the scan.
+Running it twice in a row is safe: the second run finds nothing to close, restore, or delete, and says so. `bin/demo-reset --dry-run` prints what each step would do and changes nothing on GitHub or locally.
+It needs `SLA_REPO` and `SLA_GITHUB_TOKEN`, and the token needs write access to contents, issues, and pull requests on the fork.
+
+A fresh demo run is the reset followed by the scan:
+
+```sh
+bin/demo-reset && bin/scan
+```
