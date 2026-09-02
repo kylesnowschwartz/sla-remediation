@@ -27,6 +27,7 @@ Metrics/AbcSize:
 Metrics/ClassLength:
   Exclude:
     - "test/**/*_test.rb"
+    - "lib/sla/status_page.rb"
 
 Metrics/MethodLength:
   Exclude:

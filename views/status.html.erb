@@ -93,6 +93,10 @@
       user-select: none;
     }
     td.toggle label::before { content: "▸"; }
+    td.toggle label:focus-visible {
+      outline: var(--hairline) solid var(--accent);
+      outline-offset: var(--sp-2);
+    }
     tr:has(input:checked) td.toggle label::before { content: "▾"; }
     tr:has(input:checked) td { border-bottom-color: transparent; }
     tr.detail { display: none; }
@@ -147,7 +151,7 @@
         <tr>
           <td class="toggle">
             <input type="checkbox" id="<%= h row.toggle_id %>">
-            <label for="<%= h row.toggle_id %>"></label>
+            <label for="<%= h row.toggle_id %>" aria-label="show details for #<%= h row.issue_number %>"></label>
           </td>
           <td>
             <% if row.issue_url %>
@@ -157,7 +161,12 @@
             <% end %>
           </td>
           <td>
-            <%= h row.package %> <%= h row.pinned %>&rarr;<% if row.fix_version %><%= h row.fix_version %><% else %><span class="muted">no fix</span><% end %>
+            <%= h row.package %>
+            <% if row.fix_version? %>
+              <%= h row.versions %>
+            <% else %>
+              <%= h row.pinned %> &rarr; <span class="muted"><%= h row.no_fix_text %></span>
+            <% end %>
           </td>
           <td class="<%= h "sev-#{row.severity}" %>"><%= h row.severity %></td>
           <td>
@@ -201,13 +210,13 @@
           <% if row.started %>
             <dt>started</dt><dd><%= h row.started %></dd>
           <% end %>
-          <% if row.time_to_pr_reported? %>
+          <% if row.time_to_pr %>
             <dt>time to PR</dt><dd><%= h row.time_to_pr %> <span class="muted">as first seen by the tracker</span></dd>
           <% end %>
-          <% if row.session? && row.acus == 'not reported' %>
-            <dt>ACUs</dt><dd class="muted"><%= h row.acus %></dd>
-          <% elsif row.session? %>
+          <% if row.session? && row.acus_reported? %>
             <dt>ACUs</dt><dd><%= h row.acus %></dd>
+          <% elsif row.session? %>
+            <dt>ACUs</dt><dd class="muted"><%= h row.acus %></dd>
           <% end %>
           <% if row.lockfile %>
             <dt>lockfile</dt><dd><%= h row.lockfile %></dd>

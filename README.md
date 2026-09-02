@@ -63,7 +63,7 @@ A structured output that does not match `schemas/remediation_result.json` is kep
 
 ## Status page
 
-`GET /` (http://localhost:4567/ locally) is a dense, monospaced, terminal-style page that reloads itself every 15 s: four counts (findings tracked, pull requests open, findings inside their SLA window, findings that have breached it) and one row per finding, sorted by severity and then by due date, with the issue, package and versions, severity, the due date, the SLA word, what the Devin session is doing, and the pull request. A checkbox-and-label toggle next to each row expands a second, CSS-only detail row underneath it with the finding's title, advisories, source, session status, start time, time to PR, ACUs, and lockfile verification.
+`GET /` (http://localhost:4567/ locally) is a dense, monospaced, terminal-style page that reloads itself every 15 s: four counts (findings tracked, pull requests open, findings inside their SLA window, findings that have breached it) and one row per finding, sorted by severity and then by due date, with the issue, package and versions, severity, the due date, the SLA word, what the Devin session is doing, and the pull request. A checkbox-and-label toggle next to each row expands a second, CSS-only detail row underneath it with the finding's title, filed time, advisories, source, session status, start time, time to PR, ACUs, and lockfile verification.
 `SLA::StatusPage` (`lib/sla/status_page.rb`) reads findings left-joined to sessions and decides everything; `views/status.html.erb` only prints it. The SLA word is decided in this order:
 
 - `met` — a pull request exists and the tracker first saw it at or before the due date.
@@ -73,7 +73,7 @@ A structured output that does not match `schemas/remediation_result.json` is kep
 - `in progress` — no pull request, a session exists, and the due date has not passed.
 - `waiting` — no pull request, no session, and the due date has not passed.
 
-ACUs read `not reported` when the API returns nil or 0.0: this organisation's usage is not metered through the API, so 0.0 does not mean free; the time-to-PR column is the cost signal for now.
+ACUs read `not reported` when the API returns nil or 0.0: this organisation's usage is not metered through the API, so 0.0 does not mean free; time to PR in the detail row is the cost signal for now.
 
 ## Resetting the demo
 
