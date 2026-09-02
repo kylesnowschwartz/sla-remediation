@@ -76,7 +76,7 @@
       font-weight: var(--weight-bold);
       border-bottom-color: var(--line-strong);
     }
-    th, td.tabular, td .tabular, .sla { white-space: nowrap; }
+    th, td.tabular, td .tabular, td.devin, .sla { white-space: nowrap; }
     .issue { min-width: var(--w-rail); }
     .num { text-align: right; }
     .sla {
@@ -160,7 +160,7 @@
             <td class="tabular"><%= h row.filed %></td>
             <td class="tabular"><%= h row.due %> <%= h row.due_in %></td>
             <td><span class="sla <%= h row.sla_class %>"><%= h row.sla %></span></td>
-            <td>
+            <td class="devin">
               <% if row.devin_url %>
                 <a href="<%= h row.devin_url %>"><%= h row.devin %></a>
               <% else %>
