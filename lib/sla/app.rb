@@ -18,6 +18,9 @@ module SLA
   class App < Sinatra::Base
     set :root, File.expand_path('../..', __dir__)
     set :views, File.join(root, 'views')
+    # The webhook signature is the security boundary, so any Host header is
+    # accepted; inside Docker Compose the relay reaches this service as "app".
+    set :host_authorization, { permitted_hosts: [] }
 
     set :github, -> { @github ||= GitHubClient.new }
     # SECURITY-SLA.md of the target repo, fetched on first use and kept for the process lifetime.
