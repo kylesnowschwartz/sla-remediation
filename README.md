@@ -165,7 +165,7 @@ server and the tracker. `docker compose down -v` deletes it.
 
 ## Run locally without Docker
 
-With Ruby 3.3 installed:
+With Ruby 3.3 installed (`.ruby-version` names the exact patch release for version managers such as rbenv, which reject a bare minor version; any 3.3.x satisfies the `Gemfile`):
 
 ```sh
 bundle install
