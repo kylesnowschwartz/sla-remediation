@@ -54,6 +54,11 @@ module SLA
       build_issue(request(:post, "/repos/#{repo}/issues", payload: { title: title, body: body, labels: labels }))
     end
 
+    # Posts a comment on an issue and returns the comment's URL.
+    def create_issue_comment(repo, number, body)
+      request(:post, "/repos/#{repo}/issues/#{number}/comments", payload: { body: body })['html_url']
+    end
+
     # The open pull request whose head is the named branch of the repository
     # itself (not a fork), or nil when there is none.
     def open_pull_request(repo, head_branch:)

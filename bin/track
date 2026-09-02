@@ -1,0 +1,43 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Polls every open Devin session and records what it reports.
+#
+#   bin/track           # one round, then print the summary
+#   bin/track --loop    # a round every 15 s until INT or TERM, printing each summary
+#
+# Needs DEVIN_SERVICE_API_KEY_V3 and DEVIN_ORG_ID. With SLA_GITHUB_TOKEN and
+# SLA_REPO set it comments on the finding's issue when a pull request appears;
+# without them nothing is posted.
+
+require 'bundler/setup'
+require 'optparse'
+
+require_relative '../lib/sla/boot'
+
+REQUIRED_ENV = %w[DEVIN_SERVICE_API_KEY_V3 DEVIN_ORG_ID].freeze
+INTERVAL_SECONDS = 15
+
+loop_forever = false
+OptionParser.new do |opts|
+  opts.banner = 'Usage: bin/track [--loop]'
+  opts.on('--loop', "Keep polling every #{INTERVAL_SECONDS} s until INT or TERM") { loop_forever = true }
+end.parse!
+
+missing = REQUIRED_ENV.select { |name| ENV[name].to_s.empty? }
+unless missing.empty?
+  warn "Missing environment variables: #{missing.join(', ')}"
+  exit 1
+end
+
+tracker = SLA::Tracker.new(db: SLA::DB, devin: SLA::DevinClient.new, notifier: SLA::Boot.notifier,
+                           log: Logger.new($stderr))
+
+unless loop_forever
+  puts SLA::Tracker.summary_line(tracker.poll_once)
+  exit 0
+end
+
+stop = Queue.new
+%w[INT TERM].each { |signal| trap(signal) { stop << :stop } }
+tracker.run(interval: INTERVAL_SECONDS, stop: stop) { |summary| puts SLA::Tracker.summary_line(summary) }
