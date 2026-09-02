@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'json'
 require 'sequel'
 
 require_relative 'notifier'
@@ -14,7 +15,7 @@ module SLA
     TIME_FORMAT = Notifier::DUE_AT_FORMAT
     NONE = '—'
     SESSION_COLUMNS = %i[devin_session_id status status_detail acus_consumed pr_url pr_state outcome started_at
-                         pr_notified_at].freeze
+                         pr_notified_at structured_output].freeze
 
     Summary = Struct.new(:findings, :pull_requests_open, :inside_sla, :breached, keyword_init: true)
 
@@ -32,7 +33,8 @@ module SLA
         @now = now
       end
 
-      %i[issue_number issue_url issue_title package severity pr_url pr_state].each do |column|
+      %i[issue_number issue_url issue_title package pinned fix_version severity pr_url pr_state source
+         ecosystem devin_session_id].each do |column|
         define_method(column) { record[column] }
       end
 
@@ -45,12 +47,16 @@ module SLA
       end
 
       def due
-        StatusPage.time(record[:due_at])
+        StatusPage.time(record[:due_at]).sub(' UTC', '')
       end
 
       def due_in
         remaining = record[:due_at] - now
         remaining.negative? ? "#{StatusPage.duration(-remaining)} ago" : "in #{StatusPage.duration(remaining)}"
+      end
+
+      def overdue?
+        record[:due_at] < now
       end
 
       def sla
@@ -59,6 +65,14 @@ module SLA
 
       def sla_class
         "sla-#{sla.tr(' ', '-')}"
+      end
+
+      def sla_tag
+        "[#{sla.upcase}]"
+      end
+
+      def toggle_id
+        "f#{issue_number}"
       end
 
       def breached?
@@ -90,11 +104,44 @@ module SLA
         acus_consumed.nil? || acus_consumed.zero? ? NOT_REPORTED : acus_consumed.to_s
       end
 
-      private
+      # "running/finished → settled", or just "running/finished" before the
+      # session has closed.
+      def session_status
+        status = record.values_at(:status, :status_detail).compact.join('/')
+        record[:outcome] ? "#{status} → #{record[:outcome]}" : status
+      end
 
-      def dispatched?
+      def started
+        record[:started_at] && StatusPage.time(record[:started_at])
+      end
+
+      def time_to_pr_reported?
+        !!(record[:started_at] && record[:pr_notified_at])
+      end
+
+      def advisories
+        return nil unless record[:advisories]
+
+        list = JSON.parse(record[:advisories])
+        list.empty? ? nil : list.join(', ')
+      end
+
+      # The verification the session reported on its structured output, or nil
+      # before a session has reported one.
+      def lockfile
+        return nil unless record[:structured_output]
+
+        data = JSON.parse(record[:structured_output])
+        verification = data['verification'] || {}
+        "#{data['lockfile_route']} · #{verification['tool']} #{verification['clean'] ? 'clean' : 'not clean'}"
+      end
+
+      def session?
         !record[:session_row_id].nil?
       end
+      alias dispatched? session?
+
+      private
 
       def sla_word
         due_at = record[:due_at]

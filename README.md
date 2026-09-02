@@ -63,7 +63,7 @@ A structured output that does not match `schemas/remediation_result.json` is kep
 
 ## Status page
 
-`GET /` (http://localhost:4567/ locally) is a server-rendered HTML page that reloads itself every 15 s: four counts (findings tracked, pull requests open, findings inside their SLA window, findings that have breached it) and one row per finding, sorted by severity and then by due date, with the issue, package and versions, filed and due times, the SLA word, what the Devin session is doing, the pull request, the time from session start to the pull request as first seen by the tracker, and the ACUs consumed.
+`GET /` (http://localhost:4567/ locally) is a dense, monospaced, terminal-style page that reloads itself every 15 s: four counts (findings tracked, pull requests open, findings inside their SLA window, findings that have breached it) and one row per finding, sorted by severity and then by due date, with the issue, package and versions, severity, the due date, the SLA word, what the Devin session is doing, and the pull request. A checkbox-and-label toggle next to each row expands a second, CSS-only detail row underneath it with the finding's title, advisories, source, session status, start time, time to PR, ACUs, and lockfile verification.
 `SLA::StatusPage` (`lib/sla/status_page.rb`) reads findings left-joined to sessions and decides everything; `views/status.html.erb` only prints it. The SLA word is decided in this order:
 
 - `met` — a pull request exists and the tracker first saw it at or before the due date.
