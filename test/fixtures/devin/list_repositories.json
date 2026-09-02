@@ -1,0 +1,59 @@
+{
+  "end_cursor": "djE6Z2l0LWNvbm5lY3Rpb24tYjU0ZGJmMjg1YjhhNGI0NDg5YTBkYzgyMGY5OGY3OGU6Ul9rZ0RPUW95cFdn",
+  "has_next_page": false,
+  "total": null,
+  "items": [
+    {
+      "provider_repository_id": "R_kgDOULt0BQ",
+      "git_connection_id": "git-connection-b54dbf285b8a4b4489a0dc820f98f78e",
+      "git_connection_host": "github.com",
+      "repo_name": "sla-remediation",
+      "repo_path": "kylesnowschwartz/sla-remediation",
+      "repo_description": "Event-driven dependency-vulnerability remediation on the Devin API: scanner findings become Devin sessions, PRs, and an SLA status page",
+      "last_updated_at": 1788333985,
+      "repo_language": null,
+      "indexing_status": {
+        "indexing_enabled": true,
+        "latest_indexes": [
+          {
+            "job_id": "repo-idx-job-ab42b9b01f38425dbd7e2d234fb30098",
+            "status": "completed",
+            "commit": "ae337c002795d882e7256dd3d65ece9bbac82ec9",
+            "branch_name": "master",
+            "created_at": 1788334474
+          }
+        ],
+        "latest_completed_search_index_job": {
+          "job_id": "repo-idx-job-71170f82e9654b49b351b532716d44ff",
+          "status": "completed",
+          "commit": "ae337c002795d882e7256dd3d65ece9bbac82ec9",
+          "branch_name": null,
+          "created_at": 1788334514
+        },
+        "latest_completed_wiki_index_job": {
+          "job_id": "repo-idx-job-ab42b9b01f38425dbd7e2d234fb30098",
+          "status": "completed",
+          "commit": "ae337c00",
+          "branch_name": "master",
+          "created_at": 1788334635
+        }
+      }
+    },
+    {
+      "provider_repository_id": "R_kgDOUKtQUQ",
+      "git_connection_id": "git-connection-b54dbf285b8a4b4489a0dc820f98f78e",
+      "git_connection_host": "github.com",
+      "repo_name": "superset",
+      "repo_path": "kylesnowschwartz/superset",
+      "repo_description": "Apache Superset is a Data Visualization and Data Exploration Platform",
+      "last_updated_at": 1788257713,
+      "repo_language": "Python",
+      "indexing_status": {
+        "indexing_enabled": false,
+        "latest_indexes": [],
+        "latest_completed_search_index_job": null,
+        "latest_completed_wiki_index_job": null
+      }
+    }
+  ]
+}

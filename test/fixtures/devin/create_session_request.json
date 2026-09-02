@@ -1,0 +1,60 @@
+{
+  "prompt": "This is a read-only reconnaissance task on the repository\n`kylesnowschwartz/superset`. Do not create branches, commits, or pull\nrequests, and do not modify any files.\n\n1. Confirm you have access to the repository and report its default branch.\n2. Read `requirements/base.txt` and report the currently pinned versions of\n   `urllib3`, `flask`, and `paramiko`.\n3. Report which Python version is available in your environment and whether\n   `uv` is installed.\n\nProvide your findings as structured output matching the schema you were given, then end the session. Keep it brief; this is a dry run.",
+  "title": "SLA spike: read-only API dry run",
+  "repos": [
+    "kylesnowschwartz/superset"
+  ],
+  "tags": [
+    "sla-remediation",
+    "spike"
+  ],
+  "resumable": false,
+  "max_acu_limit": 1,
+  "structured_output_schema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "required": [
+      "repo_accessible",
+      "default_branch",
+      "pins",
+      "python_version",
+      "uv_installed"
+    ],
+    "properties": {
+      "repo_accessible": {
+        "type": "boolean"
+      },
+      "default_branch": {
+        "type": "string"
+      },
+      "pins": {
+        "type": "object",
+        "required": [
+          "urllib3",
+          "flask",
+          "paramiko"
+        ],
+        "properties": {
+          "urllib3": {
+            "type": "string"
+          },
+          "flask": {
+            "type": "string"
+          },
+          "paramiko": {
+            "type": "string"
+          }
+        }
+      },
+      "python_version": {
+        "type": "string"
+      },
+      "uv_installed": {
+        "type": "boolean"
+      },
+      "notes": {
+        "type": "string"
+      }
+    }
+  }
+}
