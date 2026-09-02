@@ -16,3 +16,18 @@ Layout/LineLength:
 Metrics/BlockLength:
   Exclude:
     - "db/migrations/*.rb"
+
+Metrics/ParameterLists:
+  CountKeywordArgs: false
+
+Metrics/AbcSize:
+  Exclude:
+    - "test/**/*_test.rb"
+
+Metrics/ClassLength:
+  Exclude:
+    - "test/**/*_test.rb"
+
+Metrics/MethodLength:
+  Exclude:
+    - "test/**/*_test.rb"
