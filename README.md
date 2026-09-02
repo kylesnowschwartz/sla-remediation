@@ -1,19 +1,171 @@
 # sla-remediation
 
-A Ruby service that turns dependency vulnerabilities into fixed pull requests
-inside a security SLA. A labeled GitHub issue on the target repo carries a
-`yaml` finding block (`package, pinned, fix_version, advisories[], severity,
-source`); the service receives the `issues` webhook, verifies its signature,
-computes the due date from the repo's `SECURITY-SLA.md`, stores the finding
-in SQLite, and starts a Devin session with a rendered prompt and a structured
-output schema. A tracker polls each session every 15 s, records its status,
-ACUs consumed, and pull request, comments on the issue with the PR link, and a
-status page lists every finding against its SLA due date.
+A Ruby service that turns known-vulnerable Python dependencies into fixed pull
+requests inside a security SLA. A scanner files each vulnerable dependency in a
+GitHub repository as a labelled issue; each issue starts a Devin session that
+opens a fix pull request; a tracker records the session's progress and
+comments the pull request on the issue; and a status page shows whether every
+finding is inside the security SLA, the number of days a fix is allowed to
+take, by severity.
 
-See [docs/architecture.md](docs/architecture.md) for the actors and data
-flows, and [docs/decisions/](docs/decisions/) for the decision records.
+In more detail: a GitHub issue on the target repository with the
+`sla-remediation` label carries a `yaml` finding block (`package, pinned,
+fix_version, advisories[], severity, source`); the service receives the
+`issues` webhook, verifies its signature, computes the due date from the
+repository's `SECURITY-SLA.md`, stores the finding in SQLite, and starts a
+Devin session with a rendered prompt and a structured output schema. A tracker
+polls each session every 15 s, records its status, ACUs consumed, and pull
+request, comments on the issue with the PR link, and a status page lists every
+finding against its SLA due date.
 
-## Run locally
+## Why
+
+Dependency vulnerabilities pile up because nobody owns the fix: a scanner
+reports them, the report is read, and the pins stay where they are. The SLA
+policy in the target repository's
+[`SECURITY-SLA.md`](https://github.com/kylesnowschwartz/superset/blob/master/SECURITY-SLA.md)
+names the deadline for each severity, and this service makes that deadline
+visible and hands the routine fixes to Devin. The decision to keep the policy
+in the repository is
+[decision 1](docs/decisions/0001-sla-policy-lives-in-the-repo.md).
+
+## How it works
+
+```mermaid
+flowchart LR
+  subgraph fork["GitHub fork: kylesnowschwartz/superset"]
+    direction TB
+    SLA[SECURITY-SLA.md<br/>+ policy issue]
+    ISS[Issues<br/>label: sla-remediation<br/>yaml finding block]
+    PR[Pull requests]
+    CI[Actions CI]
+    PR --> CI
+  end
+
+  subgraph svc["sla-remediation service (Ruby, Docker)"]
+    direction TB
+    RX[Webhook receiver<br/>HMAC verify, event filter]
+    TRI[Triage<br/>parse finding block<br/>start SLA clock]
+    DSP[Dispatcher<br/>render prompt template<br/>POST /sessions + schema + tags]
+    TRK[Tracker<br/>poll every 15 s<br/>validate structured_output]
+    DB[(SQLite<br/>findings, sessions)]
+    UI[Status page<br/>GET / HTML]
+    RX --> TRI --> DSP
+    TRI --> DB
+    TRK --> DB
+    DB --> UI
+  end
+
+  subgraph devin["Devin"]
+    direction TB
+    API[Devin API v3]
+    VM[Devin session<br/>bump pin, verify, open PR<br/>emit structured output]
+    API --> VM
+  end
+
+  SCAN[bin/scan<br/>pip-audit → issues] -- files labeled issue --> ISS
+  ENG([Engineer applies label]) --> ISS
+  ISS -- webhook via smee.io --> RX
+  DSP -- create session --> API
+  TRK <-- poll GET /sessions/:id --> API
+  VM -- opens PR --> PR
+  TRK -- comment: PR link + status --> ISS
+  REV([Reviewer<br/>localhost:4567]) --> UI
+```
+
+The data flows, in the order of a single remediation:
+
+1. **Detection → issue.** `bin/scan` (deterministic) or a human files/labels
+   an issue on the fork. The issue body carries a fenced `yaml` finding
+   block: `package, pinned, fix_version, advisories[], severity, source`.
+   The due date is computed by the service (issue `created_at` + the
+   `SECURITY-SLA.md` window), not carried in the block.
+2. **GitHub → service.** GitHub POSTs the `issues` event to the smee channel;
+   the smee client forwards it to `POST /webhooks/github`. The receiver
+   verifies `X-Hub-Signature-256`, accepts `opened`-with-label or `labeled`
+   (start) and `closed` on a tracked issue (remediated), ignores everything
+   else.
+3. **Service → DB.** Triage parses the finding block, computes the SLA
+   deadline from `SECURITY-SLA.md`'s windows, and inserts a `finding` row.
+   Uniqueness on issue number makes duplicate deliveries a no-op.
+4. **Service → Devin.** The dispatcher renders the prompt template with the
+   finding, then `POST /v3/organizations/{org}/sessions` with `prompt`,
+   `repos`, `tags`, `title`, `resumable: false`, `max_acu_limit`,
+   `structured_output_schema`. It stores `session_id`, `url`, `status`.
+5. **Devin → GitHub.** The session bumps the pin, verifies with pip-audit,
+   opens a PR on the fork referencing the issue, and records its structured
+   output.
+6. **Service ← Devin.** The tracker polls each open session every 15 s,
+   records `status`, `status_detail`, `pull_requests[]`, `acus_consumed`,
+   `structured_output` (validated against the schema once, at this
+   boundary). Terminal: `exit`/`error`; `suspended`+`inactivity` = stalled.
+7. **Service → GitHub.** On first PR detection the Notifier comments on the
+   issue with the PR link and session summary.
+8. **DB → humans.** The status page lists findings with SLA due, session
+   state, PR link, ACUs consumed, time-to-PR.
+
+The actors and their boundaries are described further in
+[docs/architecture.md](docs/architecture.md).
+
+## Run with Docker
+
+You need:
+
+- Docker with the Compose plugin (`docker compose version` prints a version).
+- A GitHub fork to point the service at. The demo uses
+  `kylesnowschwartz/superset`; any fork with a `SECURITY-SLA.md` at its root
+  and a `requirements/base.txt` works.
+- A Devin API v3 *service* key and the Devin organization ID. Only a service
+  key works for the v3 API; a personal key does not. In the Devin web app,
+  open the organization settings, create a service user, and create an API
+  key for it. The organization ID is the `org-...` value in the same
+  settings page.
+- A GitHub token with write access to contents, issues, and pull requests on
+  the fork. A fine-grained personal access token scoped to the one repository
+  is enough.
+- A smee channel, so that GitHub can deliver webhooks to a machine without a
+  public address. Create one and read its URL from the `Location` header:
+
+  ```sh
+  curl -sI https://smee.io/new | grep -i location
+  ```
+
+  Then, on the fork, open Settings → Webhooks → Add webhook and set the
+  payload URL to that smee URL, the content type to `application/json`, the
+  secret to a random string you keep as `SLA_WEBHOOK_SECRET`, and the events
+  to "Issues" only.
+
+Export the variables in the shell that will run Docker Compose, or copy
+`.env.example` to `.env` and fill it in (`.env` is ignored by git):
+
+```sh
+cp .env.example .env
+```
+
+Then build the image and start the three services:
+
+```sh
+docker compose up --build
+```
+
+and open http://localhost:4567 for the status page. `curl
+localhost:4567/healthz` returns `{"ok":true}`.
+
+The one-off commands run in the same image, with the same variables and the
+same database:
+
+```sh
+docker compose run --rm app bin/scan
+docker compose run --rm app bin/demo-reset
+docker compose run --rm app bin/dispatch <issue_number>
+```
+
+The database is a SQLite file on the named volume `sla-db`, shared by the web
+server and the tracker. `docker compose down -v` deletes it.
+
+## Run locally without Docker
+
+With Ruby 3.3 installed:
 
 ```sh
 bundle install
@@ -23,17 +175,47 @@ bin/server            # Puma on http://localhost:4567
 
 `curl localhost:4567/healthz` returns `{"ok":true}`.
 
+In a second terminal, start the tracker, and in a third, the smee client
+that forwards the fork's webhooks to the server:
+
+```sh
+bin/track --loop
+npx --yes smee-client --url "$SMEE_URL" --target http://localhost:4567/webhooks/github
+```
+
+`bin/scan` runs pip-audit through `uvx`, so it needs
+[`uv`](https://docs.astral.sh/uv/) on the path.
+
 ## Configuration
 
-Loaded from `.envrc` via direnv:
+Read from the shell or `.env`; the repository's own `.envrc` loads them
+through direnv:
 
 - `DEVIN_SERVICE_API_KEY_V3` — Devin API v3 service-user key used to create and poll sessions.
 - `SLA_GITHUB_TOKEN` — GitHub token for reading issues and commenting on them in the target repo.
 - `SLA_WEBHOOK_SECRET` — shared secret for verifying `X-Hub-Signature-256` on incoming GitHub webhooks.
 - `DEVIN_ORG_ID` — Devin organization ID that sessions are created under.
 - `SLA_REPO` — `owner/name` of the GitHub repo whose findings the service remediates.
+- `SLA_AUTO_DISPATCH` — set to `true` so a labelled issue starts a Devin session automatically; leave unset to only record findings.
+- `SMEE_URL` — the smee.io channel URL that the fork's webhook points at; only the smee client reads it.
 
-`SLA_DATABASE_URL` (optional) overrides the Sequel connection string; it defaults to `sqlite://db/sla.sqlite3`.
+`SLA_DATABASE_URL` (optional) overrides the Sequel connection string; it defaults to `sqlite://db/sla.sqlite3`, and the Docker image sets it to `sqlite:///app/db/sla.sqlite3`.
+
+## The demo fork
+
+The demo runs against `kylesnowschwartz/superset`, a fork of Apache Superset.
+Nothing is ever opened against `apache/superset`: issues, branches, and pull
+requests all stay on the fork.
+
+Superset keeps its pins current, so an unmodified fork has almost nothing for
+the scanner to find. Two pins in the fork's `requirements/base.txt` were
+therefore deliberately lowered to versions with published advisories, so that
+the scanner has something to report and the demo can be run more than once.
+The pins and their seeded versions are listed in `demo/seeds.yml`, the commit
+that lowers them says that they are seeds, and `bin/demo-reset` puts them back
+to those seeded values after a run. The advisories are real and every fix is
+a real upgrade; the service does not know which findings were seeded
+([decision 2](docs/decisions/0002-seeded-findings-are-real-advisories.md)).
 
 ## Devin API client
 
@@ -85,4 +267,48 @@ A fresh demo run is the reset followed by the scan:
 
 ```sh
 bin/demo-reset && bin/scan
+```
+
+## In production
+
+- Webhook delivery is best-effort, so a scheduled reconcile that lists the
+  open labelled issues and dispatches any that have no session replaces
+  reliance on the webhook.
+- The smee relay is replaced by the team's normal inbound routing; the
+  endpoint and the signature check do not change.
+- SQLite becomes either a cache that can be rebuilt from GitHub and the Devin
+  API, or a real database.
+- Merging a fix pull request automatically, if ever, uses GitHub's own
+  auto-merge behind a repository setting and required checks; the service
+  never merges.
+
+## Decisions
+
+- 1\. [Service Level Agreements are defined in this repo](docs/decisions/0001-sla-policy-lives-in-the-repo.md) — every target repository carries a `SECURITY-SLA.md` with the window in days per severity, and the service reads it to set each finding's due date.
+- 2\. [Demo findings are seeded, but the advisories are real](docs/decisions/0002-seeded-findings-are-real-advisories.md) — the demo lowers a few pins on the fork to versions with published advisories so it can be run more than once, and the service treats them like any other finding.
+- 3\. [We poll Devin for session status](docs/decisions/0003-poll-devin-sessions.md) — Devin has no outbound webhook, so a tracker polls each open session every 15 s and judges it done when it has stopped working with a structured output or a pull request.
+- 4\. [A labeled GitHub issue is the unit of work](docs/decisions/0004-issue-is-the-unit-of-work.md) — a finding is an issue with the `sla-remediation` label and a `yaml` finding block, and the `issues` webhook starts and finishes the remediation.
+- 5\. [Detection is a script; remediation is the agent](docs/decisions/0005-deterministic-detection-agentic-remediation.md) — `bin/scan` is plain Ruby around pip-audit and the GitHub Advisory Database, and Devin is only involved once an issue exists.
+- 6\. [We call the sessions API instead of configuring a Devin Automation](docs/decisions/0006-why-not-a-devin-automation.md) — an Automation starts a session when an event fires, but this service owns the finding's lifecycle and its SLA clock, so it calls the same sessions API itself.
+- 7\. [A smee.io channel relays GitHub webhooks to the developer's machine](docs/decisions/0007-smee-relays-webhooks-in-development.md) — the relay is unauthenticated, so the webhook signature check, not the relay, is the security boundary.
+
+## Development
+
+```sh
+bundle exec rake        # tests and lint (rubocop, then the Herb ERB linter)
+bundle exec rake test
+bundle exec rake lint
+```
+
+The Herb linter for the templates on its own:
+
+```sh
+npx --yes @herb-tools/linter views/ "templates/**/*.erb"
+```
+
+No API key may ever be committed. Devin API keys start with `cog` and an
+underscore, so before pushing, this must print nothing:
+
+```sh
+git grep -n 'cog[_]'
 ```

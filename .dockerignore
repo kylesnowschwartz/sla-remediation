@@ -1,0 +1,7 @@
+.git
+node_modules
+.bundle
+db/*.sqlite3
+.env
+.envrc
+docs/

@@ -1,0 +1,48 @@
+services:
+  app:
+    build: .
+    image: sla-remediation
+    command: bin/server
+    ports:
+      - "4567:4567"
+    volumes:
+      - sla-db:/app/db
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - SLA_REPO
+      - SLA_GITHUB_TOKEN
+      - SLA_WEBHOOK_SECRET
+      - DEVIN_SERVICE_API_KEY_V3
+      - DEVIN_ORG_ID
+      - SLA_AUTO_DISPATCH
+
+  tracker:
+    image: sla-remediation
+    command: bin/track --loop
+    volumes:
+      - sla-db:/app/db
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - SLA_REPO
+      - SLA_GITHUB_TOKEN
+      - DEVIN_SERVICE_API_KEY_V3
+      - DEVIN_ORG_ID
+    depends_on:
+      - app
+    restart: unless-stopped
+
+  smee:
+    image: node:20-slim
+    command: npx --yes smee-client --url ${SMEE_URL} --target http://app:4567/webhooks/github
+    environment:
+      - SMEE_URL
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  sla-db:
