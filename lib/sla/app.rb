@@ -2,6 +2,7 @@
 
 require 'json'
 require 'logger'
+require 'rack/utils'
 require 'sinatra/base'
 
 require_relative 'db'
@@ -10,6 +11,7 @@ require_relative 'dispatcher'
 require_relative 'errors'
 require_relative 'github_client'
 require_relative 'policy'
+require_relative 'status_page'
 require_relative 'webhook'
 
 module SLA
@@ -24,6 +26,17 @@ module SLA
     # Devin client and dispatcher output, created on first use; only used when SLA_AUTO_DISPATCH is "true".
     set :devin, -> { @devin ||= DevinClient.new }
     set :dispatch_out, $stdout
+
+    helpers do
+      def h(text)
+        Rack::Utils.escape_html(text.to_s)
+      end
+    end
+
+    get '/' do
+      @page = StatusPage.new(DB, repo: ENV.fetch('SLA_REPO', nil))
+      erb :'status.html'
+    end
 
     get '/healthz' do
       content_type :json

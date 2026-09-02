@@ -1,1 +1,185 @@
-<h1>SLA remediation</h1>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="15">
+  <title><%= h @page.repo %> Security SLA</title>
+  <link rel="stylesheet" href="/house-style.css">
+  <style>
+    body {
+      margin: 0 auto;
+      max-width: var(--shell);
+      padding: var(--page-pad);
+      background: var(--bg);
+      color: var(--body);
+      font-family: var(--font-prose);
+      font-size: var(--text-body);
+      font-weight: var(--weight-normal);
+      line-height: var(--leading-normal);
+    }
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: var(--sp-16);
+      margin-bottom: var(--sp-24);
+    }
+    h1 {
+      margin: 0;
+      font-family: var(--font-display);
+      font-size: var(--text-h1);
+      font-weight: var(--weight-bold);
+      line-height: var(--leading-tight);
+      letter-spacing: var(--track-display);
+    }
+    .rendered-at {
+      font-family: var(--font-data);
+      font-size: var(--text-meta);
+      color: var(--muted);
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--w-rail)), 1fr));
+      gap: var(--sp-16);
+      margin-bottom: var(--sp-24);
+    }
+    .stat {
+      background: var(--surface);
+      border: var(--hairline) solid var(--line);
+      border-radius: var(--r-8);
+      padding: var(--sp-16);
+    }
+    .stat .count {
+      font-size: var(--text-h2);
+      line-height: var(--leading-tight);
+    }
+    .stat .label {
+      font-size: var(--text-meta);
+      color: var(--muted);
+    }
+    .scroll-x { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: var(--sp-8) var(--sp-12);
+      font-size: var(--text-meta);
+      line-height: var(--leading-snug);
+      text-align: left;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+      border-bottom: var(--hairline) solid var(--line);
+    }
+    th {
+      font-weight: var(--weight-bold);
+      border-bottom-color: var(--line-strong);
+    }
+    th, td.tabular, td .tabular, td.devin, .sla { white-space: nowrap; }
+    .issue { min-width: var(--w-rail); }
+    .num { text-align: right; }
+    .sla {
+      display: inline-block;
+      padding: var(--sp-2) var(--sp-8);
+      border: var(--hairline) solid;
+      border-radius: var(--r-full);
+      font-family: var(--font-data);
+      font-size: var(--text-meta-data);
+      color: var(--body);
+    }
+    .sla-met { background: var(--positive-soft); border-color: var(--positive-solid); }
+    .sla-in-progress, .sla-waiting { background: var(--warning-soft); border-color: var(--warning-solid); }
+    .sla-breached, .sla-late { background: var(--critical-soft); border-color: var(--critical-solid); }
+    .sla-stalled { background: var(--surface); border-color: var(--line-strong); }
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    a:hover {
+      color: var(--accent-hover);
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <%= erb :_theme %>
+  <header>
+    <h1><%= h @page.repo %> Security SLA</h1>
+    <span class="rendered-at">rendered <%= h @page.rendered_at %></span>
+  </header>
+
+  <section class="stats">
+    <div class="stat">
+      <div class="count tabular"><%= h @page.summary.findings %></div>
+      <div class="label">findings tracked</div>
+    </div>
+    <div class="stat">
+      <div class="count tabular"><%= h @page.summary.pull_requests_open %></div>
+      <div class="label">pull requests open</div>
+    </div>
+    <div class="stat">
+      <div class="count tabular"><%= h @page.summary.inside_sla %></div>
+      <div class="label">inside SLA window</div>
+    </div>
+    <div class="stat">
+      <div class="count tabular"><%= h @page.summary.breached %></div>
+      <div class="label">SLA breached</div>
+    </div>
+  </section>
+
+  <div class="scroll-x">
+    <table>
+      <thead>
+        <tr>
+          <th class="issue">Issue</th>
+          <th>Package</th>
+          <th>Severity</th>
+          <th>Filed</th>
+          <th>Due</th>
+          <th>SLA</th>
+          <th>Devin</th>
+          <th>Pull request</th>
+          <th class="num" title="From the session start to the pull request as first seen by the tracker">Time to PR</th>
+          <th class="num">ACUs</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% @page.rows.each do |row| %>
+          <tr>
+            <td class="issue">
+              <% if row.issue_url %>
+                <a class="tabular" href="<%= h row.issue_url %>">#<%= h row.issue_number %></a>
+              <% else %>
+                <span class="tabular">#<%= h row.issue_number %></span>
+              <% end %>
+              <%= h row.issue_title %>
+            </td>
+            <td><%= h row.package %> <span class="tabular"><%= h row.versions %></span></td>
+            <td><%= h row.severity %></td>
+            <td class="tabular"><%= h row.filed %></td>
+            <td class="tabular"><%= h row.due %> <%= h row.due_in %></td>
+            <td><span class="sla <%= h row.sla_class %>"><%= h row.sla %></span></td>
+            <td class="devin">
+              <% if row.devin_url %>
+                <a href="<%= h row.devin_url %>"><%= h row.devin %></a>
+              <% else %>
+                <%= h row.devin %>
+              <% end %>
+            </td>
+            <td>
+              <% if row.pr_url %>
+                <a class="tabular" href="<%= h row.pr_url %>">#<%= h row.pr_number %></a> [<%= h row.pr_state %>]
+              <% else %>
+                —
+              <% end %>
+            </td>
+            <td class="num tabular"><%= h row.time_to_pr %></td>
+            <td class="num tabular"><%= h row.acus %></td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

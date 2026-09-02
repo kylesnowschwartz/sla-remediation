@@ -61,6 +61,20 @@ The first time a row has a pull request the notifier comments on the finding's i
 The comment needs `SLA_GITHUB_TOKEN`; without it the `Null` notifier is used and nothing is posted.
 A structured output that does not match `schemas/remediation_result.json` is kept as JSON text in `structured_output_invalid` with a logged warning naming the first problem; nothing is discarded.
 
+## Status page
+
+`GET /` (http://localhost:4567/ locally) is a server-rendered HTML page that reloads itself every 15 s: four counts (findings tracked, pull requests open, findings inside their SLA window, findings that have breached it) and one row per finding, sorted by severity and then by due date, with the issue, package and versions, filed and due times, the SLA word, what the Devin session is doing, the pull request, the time from session start to the pull request as first seen by the tracker, and the ACUs consumed.
+`SLA::StatusPage` (`lib/sla/status_page.rb`) reads findings left-joined to sessions and decides everything; `views/status.html.erb` only prints it. The SLA word is decided in this order:
+
+- `met` — a pull request exists and the tracker first saw it at or before the due date.
+- `late` — a pull request exists but the tracker first saw it after the due date.
+- `breached` — no pull request and the due date has passed.
+- `stalled` — no pull request, and the session stopped without a report (`outcome` is `stalled`).
+- `in progress` — no pull request, a session exists, and the due date has not passed.
+- `waiting` — no pull request, no session, and the due date has not passed.
+
+ACUs read `not reported` when the API returns nil or 0.0: this organisation's usage is not metered through the API, so 0.0 does not mean free; the time-to-PR column is the cost signal for now.
+
 ## Resetting the demo
 
 One run of the pipeline leaves the fork with open `sla-remediation` issues, a Devin pull request from a `fix/...` branch, and a bumped pin, and leaves the local database with the findings and sessions. `bin/demo-reset` (`SLA::DemoReset`, `lib/sla/demo_reset.rb`) undoes all of it, in this order, printing one line per thing done or skipped: closes (without merging) every open pull request whose head branch starts with `fix/` and deletes the branch; comments on and closes every open issue labeled `sla-remediation` (issues with other labels, including the `policy` issue, are never touched); puts the pins in `demo/seeds.yml` back to their seeded vulnerable versions in `requirements/base.txt` on `master` in one commit, or skips the commit when they already have those values; and deletes every `sessions` row, then every `findings` row. It does not run the scan.
