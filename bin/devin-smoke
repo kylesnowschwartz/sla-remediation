@@ -1,0 +1,29 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Read-only check of the Devin API client against the live API: lists the
+# organization's repositories and fetches one known session. Creates nothing.
+
+require 'bundler/setup'
+require_relative '../lib/sla/devin_client'
+
+REQUIRED_ENV = %w[DEVIN_SERVICE_API_KEY_V3 DEVIN_ORG_ID].freeze
+SESSION_ID = '7cde046172a044b18c55ceeabe09e028'
+
+missing = REQUIRED_ENV.select { |name| ENV[name].to_s.empty? }
+unless missing.empty?
+  warn "Missing environment variables: #{missing.join(', ')}"
+  exit 1
+end
+
+client = SLA::DevinClient.new
+
+puts 'Repositories:'
+client.list_repositories.each { |repo| puts "  #{repo.repo_path}" }
+
+session = client.session(SESSION_ID)
+puts "Session #{session.session_id}:"
+puts "  status:                 #{session.status}"
+puts "  status_detail:          #{session.status_detail.inspect}"
+puts "  settled?:               #{session.settled?}"
+puts "  structured_output keys: #{session.structured_output&.keys.inspect}"

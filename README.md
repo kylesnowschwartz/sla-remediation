@@ -34,3 +34,10 @@ Loaded from `.envrc` via direnv:
 - `SLA_REPO` — `owner/name` of the GitHub repo whose findings the service remediates.
 
 `SLA_DATABASE_URL` (optional) overrides the Sequel connection string; it defaults to `sqlite://db/sla.sqlite3`.
+
+## Devin API client
+
+`SLA::DevinClient` (`lib/sla/devin_client.rb`) wraps the Devin API v3 over Faraday: list repositories, create/fetch sessions, and list/send session messages, raising `SLA::DevinAPIError` on any non-2xx.
+Repositories are served from `/v3beta1/organizations/{org}/repositories`; the `/v3/` path returns 404.
+`Session#structured_output` is normalised: the API returns a JSON object when the session was created with a schema and the string `"null"` when it was not, so a Hash is kept, a String is `JSON.parse`d, and `nil` means no output yet.
+`bin/devin-smoke` (needs `DEVIN_SERVICE_API_KEY_V3` and `DEVIN_ORG_ID`) lists repositories and fetches one known session read-only; without the variables it names the missing ones and exits 1.
