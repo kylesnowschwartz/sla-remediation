@@ -1,0 +1,10 @@
+{
+  "Accept": "*/*",
+  "Content-Type": "application/json",
+  "User-Agent": "GitHub-Hookshot/3e9831d",
+  "X-Github-Delivery": "dc8eeea0-a6a7-11f1-8108-e3016a6d870a",
+  "X-Github-Event": "issues",
+  "X-Github-Hook-Id": "673486796",
+  "X-Github-Hook-Installation-Target-Id": "1353404497",
+  "X-Github-Hook-Installation-Target-Type": "repository"
+}
