@@ -12,10 +12,12 @@ module SLA
     API_VERSION = '2022-11-28'
     TIMEOUT_SECONDS = 15
     ISSUES_PER_PAGE = 100
+    PULLS_PER_PAGE = 100
 
     Advisory = Struct.new(:ghsa_id, :cve_id, :severity, :summary, keyword_init: true)
     Issue = Struct.new(:number, :title, :body, :html_url, keyword_init: true)
-    PullRequest = Struct.new(:number, :title, :html_url, keyword_init: true)
+    PullRequest = Struct.new(:number, :title, :html_url, :head_branch, keyword_init: true)
+    FileContents = Struct.new(:text, :sha, keyword_init: true)
 
     # Without a token the client is anonymous, which is enough for the public
     # advisories endpoint but not for reading or filing issues.
@@ -27,10 +29,21 @@ module SLA
     # base64-encodes the file body.
     def file_contents(repo, path, ref:)
       body = request(:get, "/repos/#{repo}/contents/#{path}", params: { ref: ref })
-      encoding = body['encoding']
-      raise Error, "GitHub returned #{encoding.inspect} encoding for #{repo}/#{path}" unless encoding == 'base64'
+      decode_contents(body, repo, path)
+    end
 
-      Base64.decode64(body.fetch('content')).force_encoding(Encoding::UTF_8)
+    # Text of a file at the given ref together with its blob sha, which the
+    # contents API requires to update the file.
+    def file_with_sha(repo, path, ref:)
+      body = request(:get, "/repos/#{repo}/contents/#{path}", params: { ref: ref })
+      FileContents.new(text: decode_contents(body, repo, path), sha: body.fetch('sha'))
+    end
+
+    # Replaces the file on the branch in one commit; `sha` is the blob sha of
+    # the version being replaced. Returns the new commit's URL.
+    def update_file(repo, path, content:, message:, sha:, branch:)
+      payload = { message: message, content: Base64.strict_encode64(content), sha: sha, branch: branch }
+      request(:put, "/repos/#{repo}/contents/#{path}", payload: payload).fetch('commit')['html_url']
     end
 
     # A global security advisory from the GitHub Advisory Database.
@@ -59,13 +72,34 @@ module SLA
       request(:post, "/repos/#{repo}/issues/#{number}/comments", payload: { body: body })['html_url']
     end
 
+    def close_issue(repo, number)
+      build_issue(request(:patch, "/repos/#{repo}/issues/#{number}", payload: { state: 'closed' }))
+    end
+
+    # Every open pull request, first page of up to 100, with its head branch name.
+    def open_pull_requests(repo)
+      params = { state: 'open', per_page: PULLS_PER_PAGE }
+      request(:get, "/repos/#{repo}/pulls", params: params).map { |item| build_pull_request(item) }
+    end
+
+    # Closes the pull request without merging it.
+    def close_pull_request(repo, number)
+      build_pull_request(request(:patch, "/repos/#{repo}/pulls/#{number}", payload: { state: 'closed' }))
+    end
+
+    # Deletes the branch; the refs endpoint answers 204 with no body.
+    def delete_branch(repo, branch)
+      request(:delete, "/repos/#{repo}/git/refs/heads/#{branch}")
+      nil
+    end
+
     # The open pull request whose head is the named branch of the repository
     # itself (not a fork), or nil when there is none.
     def open_pull_request(repo, head_branch:)
       owner = repo.split('/').first
       params = { state: 'open', head: "#{owner}:#{head_branch}" }
       item = request(:get, "/repos/#{repo}/pulls", params: params).first
-      PullRequest.new(number: item.fetch('number'), title: item['title'], html_url: item['html_url']) if item
+      build_pull_request(item) if item
     end
 
     # Whether the repository has a branch of that name; the ref endpoint answers 404 when it does not.
@@ -92,6 +126,18 @@ module SLA
 
     def build_issue(item)
       Issue.new(number: item.fetch('number'), title: item['title'], body: item['body'], html_url: item['html_url'])
+    end
+
+    def decode_contents(body, repo, path)
+      encoding = body['encoding']
+      raise Error, "GitHub returned #{encoding.inspect} encoding for #{repo}/#{path}" unless encoding == 'base64'
+
+      Base64.decode64(body.fetch('content')).force_encoding(Encoding::UTF_8)
+    end
+
+    def build_pull_request(item)
+      PullRequest.new(number: item.fetch('number'), title: item['title'], html_url: item['html_url'],
+                      head_branch: item.dig('head', 'ref'))
     end
 
     def request(method, path, params: nil, payload: nil)

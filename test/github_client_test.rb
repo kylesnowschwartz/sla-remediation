@@ -11,6 +11,8 @@ module SLA
     ADVISORY_URL = 'https://api.github.com/advisories/GHSA-qccp-gfcp-xxvc'
     PULLS_URL = 'https://api.github.com/repos/kylesnowschwartz/superset/pulls'
     REF_URL = 'https://api.github.com/repos/kylesnowschwartz/superset/git/ref/heads/fix/urllib3-sla-4'
+    REFS_URL = 'https://api.github.com/repos/kylesnowschwartz/superset/git/refs/heads/fix/urllib3-sla-4'
+    REQUIREMENTS_URL = 'https://api.github.com/repos/kylesnowschwartz/superset/contents/requirements/base.txt'
     HEADERS = {
       'Authorization' => "Bearer #{TOKEN}",
       'Accept' => 'application/vnd.github+json',
@@ -167,6 +169,80 @@ module SLA
       error = assert_raises(GitHubAPIError) { @client.branch_exists?('kylesnowschwartz/superset', 'fix/urllib3-sla-4') }
 
       assert_equal 403, error.status
+    end
+
+    def test_open_pull_requests_lists_every_open_pull_with_its_head_branch
+      query = { state: 'open', per_page: '100' }
+      pulls = [{ 'number' => 9, 'title' => 'fix: urllib3', 'html_url' => 'https://example/pull/9',
+                 'head' => { 'ref' => 'fix/urllib3-sla-4' } },
+               { 'number' => 2, 'title' => 'chore', 'html_url' => 'https://example/pull/2',
+                 'head' => { 'ref' => 'chore/unrelated' } }]
+      stub_request(:get, PULLS_URL).with(query: query).to_return(status: 200, body: pulls.to_json, headers: json_header)
+
+      result = @client.open_pull_requests('kylesnowschwartz/superset')
+
+      assert_requested :get, PULLS_URL, query: query, headers: HEADERS
+      assert_equal [9, 2], result.map(&:number)
+      assert_equal ['fix/urllib3-sla-4', 'chore/unrelated'], result.map(&:head_branch)
+      assert_equal 'https://example/pull/9', result[0].html_url
+    end
+
+    def test_close_pull_request_patches_the_state_to_closed
+      closed = { 'number' => 9, 'title' => 'fix: urllib3', 'html_url' => 'https://example/pull/9', 'state' => 'closed',
+                 'head' => { 'ref' => 'fix/urllib3-sla-4' } }
+      stub_request(:patch, "#{PULLS_URL}/9").to_return(status: 200, body: closed.to_json, headers: json_header)
+
+      pull = @client.close_pull_request('kylesnowschwartz/superset', 9)
+
+      assert_requested :patch, "#{PULLS_URL}/9", headers: HEADERS, body: { state: 'closed' }.to_json
+      assert_equal 9, pull.number
+      assert_equal 'fix/urllib3-sla-4', pull.head_branch
+    end
+
+    def test_delete_branch_deletes_the_head_ref
+      stub_request(:delete, REFS_URL).to_return(status: 204, body: '')
+
+      assert_nil @client.delete_branch('kylesnowschwartz/superset', 'fix/urllib3-sla-4')
+      assert_requested :delete, REFS_URL, headers: HEADERS
+    end
+
+    def test_close_issue_patches_the_state_to_closed
+      closed = { 'number' => 4, 'title' => 'urllib3', 'body' => 'body', 'html_url' => 'https://example/4',
+                 'state' => 'closed' }
+      stub_request(:patch, "#{ISSUES_URL}/4").to_return(status: 200, body: closed.to_json, headers: json_header)
+
+      issue = @client.close_issue('kylesnowschwartz/superset', 4)
+
+      assert_requested :patch, "#{ISSUES_URL}/4", headers: HEADERS, body: { state: 'closed' }.to_json
+      assert_equal 4, issue.number
+      assert_equal 'https://example/4', issue.html_url
+    end
+
+    def test_file_with_sha_returns_the_decoded_text_and_the_blob_sha
+      body = { 'encoding' => 'base64', 'sha' => 'abc123', 'content' => Base64.encode64("urllib3==2.7.0\n") }.to_json
+      stub_request(:get, REQUIREMENTS_URL).with(query: { ref: 'master' })
+                                          .to_return(status: 200, body: body, headers: json_header)
+
+      file = @client.file_with_sha('kylesnowschwartz/superset', 'requirements/base.txt', ref: 'master')
+
+      assert_requested :get, REQUIREMENTS_URL, query: { ref: 'master' }, headers: HEADERS
+      assert_equal "urllib3==2.7.0\n", file.text
+      assert_equal Encoding::UTF_8, file.text.encoding
+      assert_equal 'abc123', file.sha
+    end
+
+    def test_update_file_puts_the_encoded_content_with_message_sha_and_branch
+      created = { 'content' => { 'sha' => 'def456' }, 'commit' => { 'html_url' => 'https://example/commit/1' } }
+      stub_request(:put, REQUIREMENTS_URL).to_return(status: 200, body: created.to_json, headers: json_header)
+
+      url = @client.update_file('kylesnowschwartz/superset', 'requirements/base.txt',
+                                content: "urllib3==2.4.0\n", message: 'chore: reseed', sha: 'abc123', branch: 'master')
+
+      expected = { message: 'chore: reseed', content: Base64.strict_encode64("urllib3==2.4.0\n"), sha: 'abc123',
+                   branch: 'master' }.to_json
+
+      assert_requested :put, REQUIREMENTS_URL, headers: HEADERS, body: expected
+      assert_equal 'https://example/commit/1', url
     end
 
     private
