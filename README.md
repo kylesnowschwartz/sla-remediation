@@ -122,7 +122,9 @@ You need:
   settings page.
 - A GitHub token with write access to contents, issues, and pull requests on
   the fork. A fine-grained personal access token scoped to the one repository
-  is enough.
+  is enough. The service reads `SECURITY-SLA.md` from the fork on the first
+  webhook delivery; without a token that read counts against GitHub's small
+  anonymous rate limit and can fail on a shared network.
 - A smee channel, so that GitHub can deliver webhooks to a machine without a
   public address. Create one and read its URL from the `Location` header:
 
