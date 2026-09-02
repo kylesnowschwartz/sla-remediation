@@ -1,0 +1,26 @@
+<%- count = finding.advisories.size == 1 ? 'an advisory' : "#{finding.advisories.size} advisories" -%>
+<%- if finding.fixable? -%>
+`<%= finding.package %>` is pinned at <%= finding.pinned %>, which is affected by <%= count %>; upgrading to <%= finding.fix_version %> fixes <%= finding.advisories.size == 1 ? 'it' : 'all of them' %>.
+<%- else -%>
+`<%= finding.package %>` is pinned at <%= finding.pinned %>, which is affected by <%= count %>; no fixed release exists yet.
+<%- end -%>
+
+The remediation window is <%= days %> days for <%= finding.severity %> findings, per SECURITY-SLA.md.
+
+## Advisories
+
+<%- finding.advisories.each do |ghsa_id| -%>
+- <%= ghsa_id %><%= finding.cve_ids[ghsa_id] ? " (#{finding.cve_ids[ghsa_id]})" : '' %>: <%= finding.advisory_summaries[ghsa_id] %>
+<%- end -%>
+
+```yaml
+package: <%= finding.package %>
+pinned: "<%= finding.pinned %>"
+fix_version: <%= finding.fixable? ? %("#{finding.fix_version}") : 'null' %>
+advisories:
+<%- finding.advisories.each do |ghsa_id| -%>
+  - <%= ghsa_id %>
+<%- end -%>
+severity: <%= finding.severity %>
+source: <%= finding.source %>
+```

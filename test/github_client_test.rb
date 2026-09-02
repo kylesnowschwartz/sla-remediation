@@ -7,6 +7,8 @@ module SLA
     TOKEN = 'test-token'
     FIXTURES = File.expand_path('fixtures/github', __dir__)
     CONTENTS_URL = 'https://api.github.com/repos/kylesnowschwartz/superset/contents/SECURITY-SLA.md'
+    ISSUES_URL = 'https://api.github.com/repos/kylesnowschwartz/superset/issues'
+    ADVISORY_URL = 'https://api.github.com/advisories/GHSA-qccp-gfcp-xxvc'
     HEADERS = {
       'Authorization' => "Bearer #{TOKEN}",
       'Accept' => 'application/vnd.github+json',
@@ -49,6 +51,58 @@ module SLA
       assert_equal 404, error.status
       assert_equal({ 'message' => 'Not Found' }, error.body)
       assert_kind_of SLA::Error, error
+    end
+
+    def test_advisory_reads_the_recorded_advisory
+      stub_request(:get, ADVISORY_URL).to_return(status: 200, body: fixture('advisories/GHSA-qccp-gfcp-xxvc.json'),
+                                                 headers: json_header)
+
+      advisory = @client.advisory('GHSA-qccp-gfcp-xxvc')
+
+      assert_requested :get, ADVISORY_URL, headers: HEADERS
+      assert_equal 'GHSA-qccp-gfcp-xxvc', advisory.ghsa_id
+      assert_equal 'CVE-2026-44431', advisory.cve_id
+      assert_equal 'high', advisory.severity
+      assert_equal 'urllib3: Sensitive headers forwarded across origins in proxied low-level redirects',
+                   advisory.summary
+    end
+
+    def test_without_a_token_no_authorization_header_is_sent
+      stub_request(:get, ADVISORY_URL).to_return(status: 200, body: fixture('advisories/GHSA-qccp-gfcp-xxvc.json'),
+                                                 headers: json_header)
+
+      GitHubClient.new(token: nil).advisory('GHSA-qccp-gfcp-xxvc')
+      GitHubClient.new(token: '').advisory('GHSA-qccp-gfcp-xxvc')
+
+      assert_requested(:get, ADVISORY_URL, times: 2) { |request| !request.headers.key?('Authorization') }
+    end
+
+    def test_open_issues_lists_labeled_open_issues
+      query = { state: 'open', labels: 'sla-remediation', per_page: '100' }
+      issues = [{ 'number' => 7, 'title' => 'urllib3', 'body' => 'body', 'html_url' => 'https://example/7' }]
+      stub_request(:get, ISSUES_URL).with(query: query)
+                                    .to_return(status: 200, body: issues.to_json, headers: json_header)
+
+      result = @client.open_issues('kylesnowschwartz/superset', label: 'sla-remediation')
+
+      assert_requested :get, ISSUES_URL, query: query, headers: HEADERS
+      assert_equal 1, result.size
+      assert_equal 7, result[0].number
+      assert_equal 'urllib3', result[0].title
+      assert_equal 'body', result[0].body
+      assert_equal 'https://example/7', result[0].html_url
+    end
+
+    def test_create_issue_posts_title_body_and_labels
+      created = { 'number' => 12, 'title' => 't', 'body' => 'b', 'html_url' => 'https://example/12' }
+      stub_request(:post, ISSUES_URL).to_return(status: 201, body: created.to_json, headers: json_header)
+
+      issue = @client.create_issue('kylesnowschwartz/superset', title: 't', body: 'b', labels: ['sla-remediation'])
+
+      assert_requested :post, ISSUES_URL, headers: HEADERS,
+                                          body: { title: 't', body: 'b', labels: ['sla-remediation'] }.to_json
+      assert_equal 12, issue.number
+      assert_equal 'https://example/12', issue.html_url
     end
 
     private
