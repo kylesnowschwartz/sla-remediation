@@ -20,7 +20,7 @@ Remediate this vulnerability:
    the `<%= finding.package %>` line directly and say so explicitly in the PR
    description. Either way, keep the change limited to this package.
 3. Verify the fix: strip the `-e ./superset-core` line into a temp file and
-   run `pip-audit --disable-pip --no-deps -r <tempfile>`; confirm
+   run `pip-audit --disable-pip --no-deps -r` on that temp file; confirm
    `<%= finding.package %>` is no longer flagged. Other pre-existing findings
    are out of scope — list them in the PR as out of scope, do not fix them.
 4. Check nothing else pins or vendors `<%= finding.package %>` (search
