@@ -1,0 +1,55 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Polls every open Devin session and records what it reports.
+#
+#   bin/track           # one round, then print the summary
+#   bin/track --loop    # a round every 15 s until INT or TERM, printing each summary
+#
+# Needs DEVIN_SERVICE_API_KEY_V3 and DEVIN_ORG_ID. With SLA_GITHUB_TOKEN and
+# SLA_REPO set it comments on the finding's issue when a pull request appears;
+# without them nothing is posted.
+
+require 'bundler/setup'
+require 'logger'
+require 'optparse'
+
+require_relative '../lib/sla/db'
+require_relative '../lib/sla/devin_client'
+require_relative '../lib/sla/github_client'
+require_relative '../lib/sla/notifier'
+require_relative '../lib/sla/tracker'
+
+REQUIRED_ENV = %w[DEVIN_SERVICE_API_KEY_V3 DEVIN_ORG_ID].freeze
+INTERVAL_SECONDS = 15
+
+loop_forever = false
+OptionParser.new do |opts|
+  opts.banner = 'Usage: bin/track [--loop]'
+  opts.on('--loop', "Keep polling every #{INTERVAL_SECONDS} s until INT or TERM") { loop_forever = true }
+end.parse!
+
+missing = REQUIRED_ENV.select { |name| ENV[name].to_s.empty? }
+unless missing.empty?
+  warn "Missing environment variables: #{missing.join(', ')}"
+  exit 1
+end
+
+notifier =
+  if ENV['SLA_GITHUB_TOKEN'].to_s.empty?
+    SLA::Notifier::Null.new
+  else
+    SLA::Notifier::IssueComment.new(github: SLA::GitHubClient.new(token: ENV.fetch('SLA_GITHUB_TOKEN')),
+                                    repo: ENV.fetch('SLA_REPO'))
+  end
+
+tracker = SLA::Tracker.new(db: SLA::DB, devin: SLA::DevinClient.new, notifier: notifier, log: Logger.new($stderr))
+summary_line = ->(summary) { summary.map { |key, value| "#{key}=#{value}" }.join(' ') }
+
+unless loop_forever
+  puts summary_line.call(tracker.poll_once)
+  exit 0
+end
+
+%w[INT TERM].each { |signal| trap(signal) { exit } }
+tracker.run(interval: INTERVAL_SECONDS) { |summary| puts summary_line.call(summary) }

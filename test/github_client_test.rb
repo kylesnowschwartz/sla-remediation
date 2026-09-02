@@ -107,6 +107,17 @@ module SLA
       assert_equal 'https://example/12', issue.html_url
     end
 
+    def test_create_issue_comment_posts_the_body_and_returns_the_comment_url
+      created = { 'id' => 1, 'html_url' => 'https://example/issues/4#issuecomment-1' }
+      stub_request(:post, "#{ISSUES_URL}/4/comments")
+        .to_return(status: 201, body: created.to_json, headers: json_header)
+
+      url = @client.create_issue_comment('kylesnowschwartz/superset', 4, 'PR opened')
+
+      assert_requested :post, "#{ISSUES_URL}/4/comments", headers: HEADERS, body: { body: 'PR opened' }.to_json
+      assert_equal 'https://example/issues/4#issuecomment-1', url
+    end
+
     def test_issue_reads_one_issue
       item = JSON.parse(fixture('github_issues_opened.json')).fetch('issue')
       stub_request(:get, "#{ISSUES_URL}/4").to_return(status: 200, body: item.to_json, headers: json_header)

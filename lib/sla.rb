@@ -13,6 +13,8 @@ require_relative 'sla/scanner'
 require_relative 'sla/webhook'
 require_relative 'sla/remediation_prompt'
 require_relative 'sla/dispatcher'
+require_relative 'sla/notifier'
+require_relative 'sla/tracker'
 require_relative 'sla/db'
 require_relative 'sla/app'
 
