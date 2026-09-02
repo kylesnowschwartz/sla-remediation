@@ -13,4 +13,15 @@ module SLA
       super("Devin API returned #{status}: #{body.inspect}")
     end
   end
+
+  # Raised when the GitHub API answers with a non-2xx status.
+  class GitHubAPIError < Error
+    attr_reader :status, :body
+
+    def initialize(status:, body:)
+      @status = status
+      @body = body
+      super("GitHub API returned #{status}: #{body.inspect}")
+    end
+  end
 end
