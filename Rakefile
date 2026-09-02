@@ -11,7 +11,7 @@ end
 desc 'Run rubocop and the Herb ERB linter'
 task :lint do
   sh 'bundle exec rubocop'
-  sh 'npx --yes @herb-tools/linter views/'
+  sh 'npx --yes @herb-tools/linter views/ "templates/**/*.erb"'
 end
 
 task default: %i[test lint]

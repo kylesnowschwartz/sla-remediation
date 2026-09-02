@@ -1,0 +1,54 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Audits the target repo's Python pins with pip-audit and files one labeled
+# GitHub issue per vulnerable package that doesn't already have an open one.
+#
+#   bin/scan                                  # read pins from GitHub, file issues
+#   bin/scan --dry-run                        # print the issues instead of filing them
+#   bin/scan --dry-run --requirements FILE    # audit a local file; needs no token
+#
+# Needs SLA_REPO, and SLA_GITHUB_TOKEN unless both --dry-run and --requirements
+# are given (then only the public advisories endpoint is used).
+
+require 'bundler/setup'
+require 'optparse'
+
+require_relative '../lib/sla/github_client'
+require_relative '../lib/sla/policy'
+require_relative '../lib/sla/scanner'
+
+options = { dry_run: false, requirements: nil, ref: 'master' }
+OptionParser.new do |parser|
+  parser.banner = 'Usage: bin/scan [--dry-run] [--requirements FILE] [--ref REF]'
+  parser.on('--dry-run', 'Print the issues that would be filed instead of filing them') { options[:dry_run] = true }
+  parser.on('--requirements FILE', 'Read pins from a local file instead of GitHub') { |f| options[:requirements] = f }
+  parser.on('--ref REF', 'Git ref to read requirements/base.txt and SECURITY-SLA.md from (default master)') do |ref|
+    options[:ref] = ref
+  end
+end.parse!
+
+repo = ENV.fetch('SLA_REPO', '')
+if repo.empty?
+  warn 'Missing environment variable: SLA_REPO'
+  exit 1
+end
+
+token = ENV.fetch('SLA_GITHUB_TOKEN', '')
+offline = options[:dry_run] && options[:requirements]
+if token.empty? && !offline
+  warn 'Missing environment variable: SLA_GITHUB_TOKEN (needed unless --dry-run --requirements FILE)'
+  exit 1
+end
+
+github = SLA::GitHubClient.new(token: token)
+policy = if offline
+           SLA::Policy.load(File.read(File.expand_path('../docs/SECURITY-SLA.md', __dir__)))
+         else
+           SLA::Policy.fetch(github, repo: repo, ref: options[:ref])
+         end
+scanner = SLA::Scanner.new(github: github, policy: policy, repo: repo, ref: options[:ref],
+                           check_open_issues: !offline)
+
+requirements_text = options[:requirements] && File.read(options[:requirements])
+scanner.run(requirements_text: requirements_text, dry_run: options[:dry_run])
