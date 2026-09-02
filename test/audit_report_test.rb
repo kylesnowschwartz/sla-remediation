@@ -33,6 +33,13 @@ module SLA
       assert_equal 'GHSA-r374-rxx8-8654', vuln.ghsa_id
     end
 
+    def test_ghsa_id_prefers_the_vulns_own_id
+      vuln = AuditReport::Vuln.new('id' => 'GHSA-aaaa-aaaa-aaaa', 'fix_versions' => [],
+                                   'aliases' => %w[CVE-2026-1 GHSA-bbbb-bbbb-bbbb])
+
+      assert_equal 'GHSA-aaaa-aaaa-aaaa', vuln.ghsa_id
+    end
+
     def test_ghsa_id_is_nil_without_a_ghsa_alias
       vuln = AuditReport::Vuln.new('id' => 'PYSEC-1', 'fix_versions' => [], 'aliases' => ['CVE-2026-1'])
 

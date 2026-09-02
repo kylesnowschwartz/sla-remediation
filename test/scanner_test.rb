@@ -110,6 +110,20 @@ module SLA
       assert_equal %w[package pinned fix_version advisories severity source], YAMLBlock.first(body).keys
     end
 
+    def test_rendered_body_notes_when_no_advisory_carries_a_severity_rating
+      package = audited_package('flask')
+      unrated = GitHubClient::Advisory.new(ghsa_id: 'GHSA-xxxx-xxxx-xxxx', cve_id: nil,
+                                           severity: 'unknown', summary: 'Unrated')
+      finding = Finding.from_audit(package, advisories: [[package.vulns.first, unrated]])
+
+      body = @scanner.render_body(finding)
+
+      assert_includes body,
+                      'The remediation window is 30 days for low findings, per SECURITY-SLA.md ' \
+                      '(no advisory carries a severity rating).'
+      assert_equal 'low', FindingBlock.parse(body).severity
+    end
+
     private
 
     def assert_round_trips(finding, body)

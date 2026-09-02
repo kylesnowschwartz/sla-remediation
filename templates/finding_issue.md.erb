@@ -5,7 +5,7 @@
 `<%= finding.package %>` is pinned at <%= finding.pinned %>, which is affected by <%= count %>; no fixed release exists yet.
 <%- end -%>
 
-The remediation window is <%= days %> days for <%= finding.severity %> findings, per SECURITY-SLA.md.
+The remediation window is <%= days %> days for <%= finding.severity %> findings, per SECURITY-SLA.md<%= finding.severity_rated? ? '' : ' (no advisory carries a severity rating)' %>.
 
 ## Advisories
 

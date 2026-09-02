@@ -20,10 +20,10 @@ module SLA
         @aliases = Array(attrs['aliases']).map(&:to_s).freeze
       end
 
-      # The GitHub advisory id among the aliases, or nil when the advisory
-      # has none.
+      # The GitHub advisory id: the vuln's own id when it is one, otherwise
+      # the first among the aliases, or nil when the advisory has none.
       def ghsa_id
-        aliases.find { |name| name.start_with?(GHSA_PREFIX) }
+        [id, *aliases].find { |name| name.start_with?(GHSA_PREFIX) }
       end
     end
 

@@ -77,11 +77,34 @@ module SLA
       assert_equal '[SLA low] paramiko 3.5.1: no fixed release', finding_for('paramiko').issue_title
     end
 
-    def test_unknown_severity_raises
+    def test_unknown_severity_is_ignored_when_another_advisory_is_rated
       package = audited_package('flask')
-      odd = GitHubClient::Advisory.new(ghsa_id: 'GHSA-x', cve_id: nil, severity: 'moderate', summary: '')
+      vuln = package.vulns.first
+      medium = advisory('GHSA-pq67-6m6q-mj2v')
 
-      assert_raises(SLA::Error) { Finding.from_audit(package, advisories: [[package.vulns.first, odd]]) }
+      finding = Finding.from_audit(package, advisories: [[vuln, unknown_advisory], [vuln, medium]])
+
+      assert_equal 'medium', finding.severity
+      assert_predicate finding, :severity_rated?
+      reversed = Finding.from_audit(package, advisories: [[vuln, medium], [vuln, unknown_advisory]])
+
+      assert_equal 'medium', reversed.severity
+    end
+
+    def test_only_unknown_severities_default_to_low_and_unrated
+      package = audited_package('flask')
+
+      finding = Finding.from_audit(package, advisories: [[package.vulns.first, unknown_advisory]])
+
+      assert_equal 'low', finding.severity
+      refute_predicate finding, :severity_rated?
+      assert_equal '[SLA low] flask 2.3.3 → 3.1.3', finding.issue_title
+    end
+
+    private
+
+    def unknown_advisory
+      GitHubClient::Advisory.new(ghsa_id: 'GHSA-xxxx-xxxx-xxxx', cve_id: nil, severity: 'unknown', summary: 'Unrated')
     end
   end
 end
