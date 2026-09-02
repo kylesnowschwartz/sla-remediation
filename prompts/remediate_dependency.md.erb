@@ -1,0 +1,39 @@
+In the repository <%= repo %> there is an open issue #<%= issue.number %>
+titled "<%= issue.title %>" (<%= issue.url %>). It was filed from pip-audit
+output and reports that the pinned version of `<%= finding.package %>`
+(<%= finding.pinned %>) in `requirements/base.txt` is affected by the
+following advisories: <%= finding.advisories.join(", ") %>. The lowest
+version that clears all of them is <%= finding.fix_version %>. Severity:
+<%= finding.severity %>. Remediation is due by <%= due_at %> under
+this repository's SECURITY-SLA.md policy.
+
+Remediate this vulnerability:
+
+1. Create a branch off `master` named `fix/<%= finding.package %>-sla-<%= issue.number %>`.
+2. Update the `<%= finding.package %>` pin in `requirements/base.txt` to a
+   non-vulnerable version: at least <%= finding.fix_version %>, preferring the
+   latest release in the same major series. `requirements/base.txt` is a
+   uv-compiled lockfile (see its header). Attempt the proper regeneration
+   with `uv pip compile pyproject.toml requirements/base.in -o requirements/base.txt`
+   (Python 3.11+ is required; install it with `uv python install 3.11` if
+   needed). If the full recompile moves unrelated pins, fall back to editing
+   the `<%= finding.package %>` line directly and say so explicitly in the PR
+   description. Either way, keep the change limited to this package.
+3. Verify the fix: strip the `-e ./superset-core` line into a temp file and
+   run `pip-audit --disable-pip --no-deps -r <tempfile>`; confirm
+   `<%= finding.package %>` is no longer flagged. Other pre-existing findings
+   are out of scope — list them in the PR as out of scope, do not fix them.
+4. Check nothing else pins or vendors `<%= finding.package %>` (search
+   `requirements/`, `pyproject.toml`, `superset-core/pyproject.toml`).
+5. Open a pull request against `master` of <%= repo %> only — never against
+   `apache/superset`. Use the repository's PR template. The description must
+   state: the advisory IDs, before/after versions, the verification result,
+   and whether you regenerated the lockfile or edited the pin directly.
+   Reference the issue with "Fixes #<%= issue.number %>".
+
+Do not modify any other dependencies or source files. Do not run the full
+test suite; CI on the pull request runs the relevant unit tests.
+
+When the pull request is open, provide your final structured output with
+the PR URL, the before/after versions, the advisories cleared, which
+lockfile route you took, and the pip-audit verification result.

@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["package", "from_version", "to_version", "advisories_cleared", "lockfile_route", "verification", "pr_url"],
+  "properties": {
+    "package": { "type": "string" },
+    "from_version": { "type": "string" },
+    "to_version": { "type": "string" },
+    "advisories_cleared": { "type": "array", "items": { "type": "string" } },
+    "lockfile_route": { "type": "string", "enum": ["recompile", "direct_edit"] },
+    "verification": {
+      "type": "object",
+      "required": ["tool", "clean"],
+      "properties": {
+        "tool": { "type": "string" },
+        "clean": { "type": "boolean" },
+        "remaining_findings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "pr_url": { "type": "string" },
+    "notes": { "type": "string" }
+  }
+}
