@@ -21,6 +21,7 @@ services:
   tracker:
     image: sla-remediation
     command: bin/track --loop
+    tty: true
     volumes:
       - sla-db:/app/db
     env_file:
