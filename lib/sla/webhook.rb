@@ -65,7 +65,7 @@ module SLA
         opened_at = Time.iso8601(issue.fetch('created_at'))
         due_at = @policy.due_at(finding.severity, opened_at)
 
-        findings.insert(finding_row(finding, opened_at).merge(issue_number: issue.fetch('number'), due_at: due_at))
+        findings.insert(finding_row(finding, opened_at).merge(issue_row(issue), due_at: due_at))
         :started
       rescue Sequel::UniqueConstraintViolation
         :duplicate
@@ -74,9 +74,13 @@ module SLA
       def finding_row(finding, opened_at)
         {
           package: finding.package, pinned: finding.pinned, fix_version: finding.fix_version,
-          severity: finding.severity, source: finding.source, advisories: JSON.generate(finding.advisories),
-          opened_at: opened_at, created_at: Time.now.utc
+          severity: finding.severity, source: finding.source, ecosystem: finding.ecosystem,
+          advisories: JSON.generate(finding.advisories), opened_at: opened_at, created_at: Time.now.utc
         }
+      end
+
+      def issue_row(issue)
+        { issue_number: issue.fetch('number'), issue_title: issue['title'], issue_url: issue['html_url'] }
       end
 
       def remediate(issue)

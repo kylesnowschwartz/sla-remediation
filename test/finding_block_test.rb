@@ -17,6 +17,13 @@ module SLA
       assert_equal %w[PYSEC-2026-141 PYSEC-2026-1998 PYSEC-2026-1994 PYSEC-2026-1996], finding.advisories
       assert_equal 'high', finding.severity
       assert_equal 'pip-audit', finding.source
+      assert_equal 'pypi', finding.ecosystem
+    end
+
+    def test_ecosystem_is_read_when_present
+      finding = FindingBlock.parse("```yaml\npackage: lodash\nseverity: low\necosystem: npm\n```")
+
+      assert_equal 'npm', finding.ecosystem
     end
 
     def test_severity_is_lowercased

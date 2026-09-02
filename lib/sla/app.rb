@@ -5,6 +5,8 @@ require 'logger'
 require 'sinatra/base'
 
 require_relative 'db'
+require_relative 'devin_client'
+require_relative 'dispatcher'
 require_relative 'errors'
 require_relative 'github_client'
 require_relative 'policy'
@@ -18,6 +20,9 @@ module SLA
     # SECURITY-SLA.md of the target repo, fetched on first use and kept for the process lifetime.
     set :policy, -> { @policy ||= Policy.fetch(GitHubClient.new, repo: ENV.fetch('SLA_REPO')) }
     set :delivery_log, Logger.new($stdout)
+    # Devin client and dispatcher output, created on first use; only used when SLA_AUTO_DISPATCH is "true".
+    set :devin, -> { @devin ||= DevinClient.new }
+    set :dispatch_out, $stdout
 
     get '/healthz' do
       content_type :json
@@ -51,17 +56,27 @@ module SLA
     def handle_delivery(event, payload)
       handler = Webhook::Handler.new(db: DB, policy: settings.policy)
       result = handler.call(event, payload)
-      log_delivery(event, payload, result)
+      dispatch = auto_dispatch(payload.dig('issue', 'number')) if result == :started
+      log_delivery(event, payload, result, dispatch)
       result
     rescue SLA::Error => e
       log_delivery(event, payload, "error (#{e.message})")
       halt 422, JSON.generate(error: e.message)
     end
 
-    def log_delivery(event, payload, result)
-      settings.delivery_log.info(
-        "webhook event=#{event} action=#{payload['action']} issue=#{payload.dig('issue', 'number')} result=#{result}"
-      )
+    def auto_dispatch(issue_number)
+      return :off unless ENV['SLA_AUTO_DISPATCH'] == 'true'
+
+      Dispatcher.new(db: DB, devin: settings.devin, repo: ENV.fetch('SLA_REPO'), out: settings.dispatch_out)
+                .dispatch(issue_number)
+    rescue SLA::Error => e
+      "error (#{e.message})"
+    end
+
+    def log_delivery(event, payload, result, dispatch = nil)
+      fields = { event: event, action: payload['action'], issue: payload.dig('issue', 'number'), result: result }
+      fields[:dispatch] = dispatch if dispatch
+      settings.delivery_log.info("webhook #{fields.map { |key, value| "#{key}=#{value}" }.join(' ')}")
     end
   end
 end

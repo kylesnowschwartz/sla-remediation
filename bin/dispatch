@@ -1,0 +1,46 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Starts the Devin session that remediates one recorded finding.
+#
+#   bin/dispatch ISSUE_NUMBER             # create the session and record it
+#   bin/dispatch ISSUE_NUMBER --dry-run   # print the prompt and request payload only
+#
+# Needs DEVIN_SERVICE_API_KEY_V3, DEVIN_ORG_ID, and SLA_REPO. Exits 0 when the
+# finding is dispatched or already was, 1 otherwise.
+
+require 'bundler/setup'
+require 'optparse'
+
+require_relative '../lib/sla/db'
+require_relative '../lib/sla/devin_client'
+require_relative '../lib/sla/dispatcher'
+
+REQUIRED_ENV = %w[DEVIN_SERVICE_API_KEY_V3 DEVIN_ORG_ID SLA_REPO].freeze
+SUCCESS = %i[dispatched already_dispatched previewed].freeze
+
+dry_run = false
+parser = OptionParser.new do |opts|
+  opts.banner = 'Usage: bin/dispatch ISSUE_NUMBER [--dry-run]'
+  opts.on('--dry-run', 'Print the rendered prompt and request payload instead of creating a session') do
+    dry_run = true
+  end
+end
+parser.parse!
+
+issue_number = Integer(ARGV.fetch(0), exception: false) if ARGV.size == 1
+if issue_number.nil?
+  warn parser.banner
+  exit 1
+end
+
+missing = REQUIRED_ENV.select { |name| ENV[name].to_s.empty? }
+unless missing.empty?
+  warn "Missing environment variables: #{missing.join(', ')}"
+  exit 1
+end
+
+dispatcher = SLA::Dispatcher.new(db: SLA::DB, devin: SLA::DevinClient.new, repo: ENV.fetch('SLA_REPO'))
+result = dry_run ? dispatcher.preview(issue_number) : dispatcher.dispatch(issue_number)
+puts result
+exit SUCCESS.include?(result) ? 0 : 1

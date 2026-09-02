@@ -107,7 +107,8 @@ module SLA
       assert_includes body, 'The remediation window is 2 days for high findings, per SECURITY-SLA.md.'
       assert_equal 6, body.scan(/^- GHSA-\S+ \(CVE-\S+\): /).size
       assert_includes body, "pinned: \"2.4.0\"\nfix_version: \"2.7.0\"\n"
-      assert_equal %w[package pinned fix_version advisories severity source], YAMLBlock.first(body).keys
+      assert_equal %w[package pinned fix_version advisories severity source ecosystem], YAMLBlock.first(body).keys
+      assert_includes body, "source: pip-audit\necosystem: pypi\n```"
     end
 
     def test_rendered_body_notes_when_no_advisory_carries_a_severity_rating
@@ -139,6 +140,7 @@ module SLA
       assert_equal finding.severity, block.severity
       assert_equal finding.advisories, block.advisories
       assert_equal 'pip-audit', block.source
+      assert_equal 'pypi', block.ecosystem
       assert_includes body, "pinned: \"#{finding.pinned}\""
       assert_includes body, finding.fixable? ? "fix_version: \"#{finding.fix_version}\"" : 'fix_version: null'
     end
