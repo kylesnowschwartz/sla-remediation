@@ -1,0 +1,44 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Undoes one run of the demo on the fork and locally so the pipeline can start
+# again from a clean state: closes Devin's fix/ pull requests and deletes their
+# branches, closes the sla-remediation issues, puts the seeded vulnerable pins
+# from demo/seeds.yml back on the default branch, and empties the sessions and
+# findings tables. It does not run the scan.
+#
+#   bin/demo-reset              # reset the fork and the database, one line per action
+#   bin/demo-reset --dry-run    # print what each step would do; change nothing
+#   bin/demo-reset && bin/scan  # a fresh demo run
+#
+# Needs SLA_REPO and SLA_GITHUB_TOKEN with write access to contents, issues,
+# and pull requests on the fork.
+
+require 'bundler/setup'
+require 'optparse'
+require 'yaml'
+
+require_relative '../lib/sla/db'
+require_relative '../lib/sla/demo_reset'
+require_relative '../lib/sla/github_client'
+
+REQUIRED_ENV = %w[SLA_GITHUB_TOKEN SLA_REPO].freeze
+SEEDS_PATH = File.expand_path('../demo/seeds.yml', __dir__)
+
+dry_run = false
+OptionParser.new do |opts|
+  opts.banner = 'Usage: bin/demo-reset [--dry-run]'
+  opts.on('--dry-run', 'Print what each step would do without changing GitHub or the database') { dry_run = true }
+end.parse!
+
+missing = REQUIRED_ENV.select { |name| ENV[name].to_s.empty? }
+unless missing.empty?
+  warn "Missing environment variables: #{missing.join(', ')}"
+  exit 1
+end
+
+reset = SLA::DemoReset.new(github: SLA::GitHubClient.new(token: ENV.fetch('SLA_GITHUB_TOKEN')),
+                           repo: ENV.fetch('SLA_REPO'), db: SLA::DB, seeds: YAML.safe_load_file(SEEDS_PATH),
+                           dry_run: dry_run)
+summary = reset.call
+puts summary.map { |key, value| "#{key}=#{value}" }.join(' ')
