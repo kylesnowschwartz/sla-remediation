@@ -1,0 +1,40 @@
+flowchart LR
+  subgraph fork["GitHub fork: kylesnowschwartz/superset"]
+    direction TB
+    SLA[SECURITY-SLA.md<br/>+ policy issue]
+    ISS[Issues<br/>label: sla-remediation<br/>yaml finding block]
+    PR[Pull requests]
+    CI[Actions CI]
+    PR --> CI
+  end
+
+  subgraph svc["sla-remediation service (Ruby, Docker)"]
+    direction TB
+    RX[Webhook receiver<br/>HMAC verify, event filter]
+    TRI[Triage<br/>parse finding block<br/>start SLA clock]
+    DSP[Dispatcher<br/>render prompt template<br/>POST /sessions + schema + tags]
+    TRK[Tracker<br/>poll every 15 s<br/>validate structured_output]
+    DB[(SQLite<br/>findings, sessions)]
+    UI[Status page<br/>GET / HTML]
+    RX --> TRI --> DSP
+    TRI --> DB
+    TRK --> DB
+    DB --> UI
+  end
+
+  subgraph devin["Devin (Cognition)"]
+    direction TB
+    API[Devin API v3]
+    VM[Devin session<br/>bump pin, verify, open PR<br/>emit structured output]
+    API --> VM
+  end
+
+  SCAN[bin/scan<br/>pip-audit → issues] -- files labeled issue --> ISS
+  ENG([Engineer applies label]) --> ISS
+  ISS -- webhook via smee.io --> RX
+  DSP -- create session --> API
+  TRK <-- poll GET /sessions/:id --> API
+  VM -- opens PR --> PR
+  TRK -- comment: PR link + status --> ISS
+  REV([Cognition reviewer<br/>localhost:4567]) --> UI
+  VP([VP / senior ICs<br/>Phase 2: Slack + static report]) -.-> UI
