@@ -1,0 +1,15 @@
+{
+  "ghsa_id": "GHSA-38jv-5279-wg99",
+  "cve_id": "CVE-2026-21441",
+  "severity": "high",
+  "summary": "Decompression-bomb safeguards bypassed when following HTTP redirects (streaming API)",
+  "published_at": "2026-01-07T19:18:14Z",
+  "vulnerabilities": [
+    {
+      "package": "urllib3",
+      "ecosystem": "pip",
+      "vulnerable_version_range": ">= 1.22, < 2.6.3",
+      "first_patched_version": "2.6.3"
+    }
+  ]
+}

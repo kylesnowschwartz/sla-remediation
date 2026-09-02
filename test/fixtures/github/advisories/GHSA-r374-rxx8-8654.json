@@ -1,0 +1,15 @@
+{
+  "ghsa_id": "GHSA-r374-rxx8-8654",
+  "cve_id": "CVE-2026-44405",
+  "severity": "low",
+  "summary": "Paramiko rsakey.py allows the SHA-1 algorithm",
+  "published_at": "2026-05-06T00:31:33Z",
+  "vulnerabilities": [
+    {
+      "package": "paramiko",
+      "ecosystem": "pip",
+      "vulnerable_version_range": "<= 4.0.0",
+      "first_patched_version": null
+    }
+  ]
+}

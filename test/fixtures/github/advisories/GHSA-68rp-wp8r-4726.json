@@ -1,0 +1,15 @@
+{
+  "ghsa_id": "GHSA-68rp-wp8r-4726",
+  "cve_id": "CVE-2026-27205",
+  "severity": "low",
+  "summary": "Flask session does not add `Vary: Cookie` header when accessed in some ways",
+  "published_at": "2026-02-19T20:45:41Z",
+  "vulnerabilities": [
+    {
+      "package": "flask",
+      "ecosystem": "pip",
+      "vulnerable_version_range": "< 3.1.3",
+      "first_patched_version": "3.1.3"
+    }
+  ]
+}

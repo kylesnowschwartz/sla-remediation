@@ -1,0 +1,15 @@
+{
+  "ghsa_id": "GHSA-9wx4-h78v-vm56",
+  "cve_id": "CVE-2024-35195",
+  "severity": "medium",
+  "summary": "Requests `Session` object does not verify requests after making first request with verify=False",
+  "published_at": "2024-05-20T20:15:00Z",
+  "vulnerabilities": [
+    {
+      "package": "requests",
+      "ecosystem": "pip",
+      "vulnerable_version_range": "< 2.32.0",
+      "first_patched_version": "2.32.0"
+    }
+  ]
+}

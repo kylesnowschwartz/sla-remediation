@@ -1,0 +1,15 @@
+{
+  "ghsa_id": "GHSA-pq67-6m6q-mj2v",
+  "cve_id": "CVE-2025-50181",
+  "severity": "medium",
+  "summary": "urllib3 redirects are not disabled when retries are disabled on PoolManager instantiation",
+  "published_at": "2025-06-18T17:50:00Z",
+  "vulnerabilities": [
+    {
+      "package": "urllib3",
+      "ecosystem": "pip",
+      "vulnerable_version_range": "< 2.5.0",
+      "first_patched_version": "2.5.0"
+    }
+  ]
+}

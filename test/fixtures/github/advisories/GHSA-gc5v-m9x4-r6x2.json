@@ -1,0 +1,15 @@
+{
+  "ghsa_id": "GHSA-gc5v-m9x4-r6x2",
+  "cve_id": "CVE-2026-25645",
+  "severity": "medium",
+  "summary": "Requests has Insecure Temp File Reuse in its extract_zipped_paths() utility function",
+  "published_at": "2026-03-25T16:56:28Z",
+  "vulnerabilities": [
+    {
+      "package": "requests",
+      "ecosystem": "pip",
+      "vulnerable_version_range": "< 2.33.0",
+      "first_patched_version": "2.33.0"
+    }
+  ]
+}

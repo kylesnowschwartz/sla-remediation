@@ -1,0 +1,15 @@
+{
+  "ghsa_id": "GHSA-qccp-gfcp-xxvc",
+  "cve_id": "CVE-2026-44431",
+  "severity": "high",
+  "summary": "urllib3: Sensitive headers forwarded across origins in proxied low-level redirects",
+  "published_at": "2026-05-11T14:51:20Z",
+  "vulnerabilities": [
+    {
+      "package": "urllib3",
+      "ecosystem": "pip",
+      "vulnerable_version_range": ">= 1.23, < 2.7.0",
+      "first_patched_version": "2.7.0"
+    }
+  ]
+}

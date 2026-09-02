@@ -1,0 +1,15 @@
+{
+  "ghsa_id": "GHSA-9hjg-9r4m-mvj7",
+  "cve_id": "CVE-2024-47081",
+  "severity": "medium",
+  "summary": "Requests vulnerable to .netrc credentials leak via malicious URLs",
+  "published_at": "2025-06-09T19:06:08Z",
+  "vulnerabilities": [
+    {
+      "package": "requests",
+      "ecosystem": "pip",
+      "vulnerable_version_range": "< 2.32.4",
+      "first_patched_version": "2.32.4"
+    }
+  ]
+}

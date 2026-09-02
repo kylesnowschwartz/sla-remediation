@@ -1,0 +1,15 @@
+{
+  "ghsa_id": "GHSA-gm62-xv2j-4w53",
+  "cve_id": "CVE-2025-66418",
+  "severity": "high",
+  "summary": "urllib3 allows an unbounded number of links in the decompression chain",
+  "published_at": "2025-12-05T18:15:19Z",
+  "vulnerabilities": [
+    {
+      "package": "urllib3",
+      "ecosystem": "pip",
+      "vulnerable_version_range": ">= 1.24, < 2.6.0",
+      "first_patched_version": "2.6.0"
+    }
+  ]
+}
