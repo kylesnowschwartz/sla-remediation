@@ -107,6 +107,19 @@ module SLA
       assert_equal 'https://example/12', issue.html_url
     end
 
+    def test_issue_reads_one_issue
+      item = JSON.parse(fixture('github_issues_opened.json')).fetch('issue')
+      stub_request(:get, "#{ISSUES_URL}/4").to_return(status: 200, body: item.to_json, headers: json_header)
+
+      issue = @client.issue('kylesnowschwartz/superset', 4)
+
+      assert_requested :get, "#{ISSUES_URL}/4", headers: HEADERS
+      assert_equal 4, issue.number
+      assert_equal 'test: webhook path (throwaway)', issue.title
+      assert_equal 'https://github.com/kylesnowschwartz/superset/issues/4', issue.html_url
+      assert_includes issue.body, 'package: urllib3'
+    end
+
     def test_open_pull_request_finds_the_open_pull_from_the_branch
       query = { state: 'open', head: 'kylesnowschwartz:fix/urllib3-sla-4' }
       pulls = [{ 'number' => 9, 'title' => 'fix: urllib3', 'html_url' => 'https://example/pull/9' }]

@@ -40,6 +40,10 @@ module SLA
                    severity: body.fetch('severity'), summary: body['summary'])
     end
 
+    def issue(repo, number)
+      build_issue(request(:get, "/repos/#{repo}/issues/#{number}"))
+    end
+
     # Open issues carrying the label, first page of up to 100.
     def open_issues(repo, label:)
       params = { state: 'open', labels: label, per_page: ISSUES_PER_PAGE }

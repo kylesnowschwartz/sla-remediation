@@ -12,6 +12,7 @@ module SLA
     PULLS_URL = "https://api.github.com/repos/#{REPO}/pulls".freeze
     PULLS_QUERY = { state: 'open', head: 'kylesnowschwartz:fix/urllib3-sla-4' }.freeze
     REF_URL = "https://api.github.com/repos/#{REPO}/git/ref/heads/fix/urllib3-sla-4".freeze
+    ISSUE_URL = "https://api.github.com/repos/#{REPO}/issues/4".freeze
     GITHUB_API = /api\.github\.com/
     FIXTURES = File.expand_path('fixtures', __dir__)
     JSON_HEADER = { 'Content-Type' => 'application/json' }.freeze
@@ -20,8 +21,9 @@ module SLA
       DB[:sessions].delete
       DB[:findings].delete
       @out = StringIO.new
-      @dispatcher = Dispatcher.new(db: DB, devin: DevinClient.new(api_key: 'test-key', org_id: ORG_ID),
-                                   github: GitHubClient.new(token: 'test-token'), repo: REPO, out: @out)
+      @dispatcher_devin = DevinClient.new(api_key: 'test-key', org_id: ORG_ID)
+      @dispatcher_github = GitHubClient.new(token: 'test-token')
+      @dispatcher = Dispatcher.new(db: DB, devin: @dispatcher_devin, github: @dispatcher_github, repo: REPO, out: @out)
       stub_request(:post, SESSIONS_URL).to_return(status: 200, body: fixture('devin/create_session_response.json'),
                                                   headers: JSON_HEADER)
       stub_request(:get, PULLS_URL).with(query: PULLS_QUERY).to_return(status: 200, body: '[]', headers: JSON_HEADER)
@@ -50,32 +52,101 @@ module SLA
                    @out.string
     end
 
-    def test_second_dispatch_is_already_dispatched_without_a_post
+    def test_two_dispatches_of_the_same_finding_post_once
       record_finding(4)
-      @dispatcher.dispatch(4)
-      WebMock.reset_executed_requests!
 
+      assert_equal :dispatched, @dispatcher.dispatch(4)
       assert_equal :already_dispatched, @dispatcher.dispatch(4)
 
-      assert_not_requested :post, SESSIONS_URL
+      assert_requested :post, SESSIONS_URL, times: 1
       assert_equal 1, DB[:sessions].count
     end
 
-    # The other dispatch inserts its row between this one's check and its insert.
-    def test_losing_the_insert_race_is_already_dispatched
+    def test_the_sessions_row_is_reserved_before_devin_is_called
       finding_id = record_finding(4)
       response = JSON.parse(fixture('devin/create_session_response.json'))
-      racer = Object.new
-      racer.define_singleton_method(:create_session) do |**|
-        DB[:sessions].insert(finding_id: finding_id, devin_session_id: 'winner', status: 'running')
+      reserved = nil
+      devin = Object.new
+      devin.define_singleton_method(:create_session) do |**|
+        reserved = DB[:sessions].where(finding_id: finding_id).select_map(:status)
         DevinClient::Session.new(response)
       end
 
-      github = GitHubClient.new(token: 'test-token')
-      result = Dispatcher.new(db: DB, devin: racer, github: github, repo: REPO, out: @out).dispatch(4)
+      result = Dispatcher.new(db: DB, devin: devin, github: @dispatcher_github, repo: REPO, out: @out).dispatch(4)
+
+      assert_equal :dispatched, result
+      assert_equal ['dispatching'], reserved
+      assert_equal %w[7cde046172a044b18c55ceeabe09e028 new], DB[:sessions].first.values_at(:devin_session_id, :status)
+    end
+
+    # The other dispatch reserves the row between this one's sessions check and its own reservation.
+    def test_losing_the_reservation_race_is_already_dispatched_without_a_post
+      finding_id = record_finding(4)
+      racer = Object.new
+      racer.define_singleton_method(:open_pull_request) do |*, **|
+        DB[:sessions].insert(finding_id: finding_id, devin_session_id: 'winner', status: 'running')
+        nil
+      end
+      racer.define_singleton_method(:branch_exists?) { |*| false }
+
+      result = Dispatcher.new(db: DB, devin: @dispatcher_devin, github: racer, repo: REPO, out: @out).dispatch(4)
 
       assert_equal :already_dispatched, result
+      assert_not_requested :post, SESSIONS_URL
       assert_equal ['winner'], DB[:sessions].select_map(:devin_session_id)
+    end
+
+    def test_a_failed_devin_call_releases_the_reservation_and_raises
+      record_finding(4)
+      stub_request(:post, SESSIONS_URL).to_return(status: 503, body: '{"detail":"unavailable"}',
+                                                  headers: JSON_HEADER)
+
+      error = assert_raises(DevinAPIError) { @dispatcher.dispatch(4) }
+
+      assert_equal 503, error.status
+      assert_requested :post, SESSIONS_URL, times: 1
+      assert_equal 0, DB[:sessions].count
+
+      WebMock.reset_executed_requests!
+      stub_request(:post, SESSIONS_URL).to_return(status: 200, body: fixture('devin/create_session_response.json'),
+                                                  headers: JSON_HEADER)
+
+      assert_equal :dispatched, @dispatcher.dispatch(4)
+      assert_equal 1, DB[:sessions].count
+    end
+
+    def test_missing_issue_details_are_fetched_from_github_and_stored
+      finding_id = record_finding(4, issue_title: nil, issue_url: nil)
+      stub_request(:get, ISSUE_URL).to_return(status: 200, body: issue_fixture.to_json, headers: JSON_HEADER)
+
+      assert_equal :dispatched, @dispatcher.dispatch(4)
+
+      assert_requested :get, ISSUE_URL, times: 1
+      assert_requested(:post, SESSIONS_URL, times: 1) { |req| session_request?(JSON.parse(req.body)) }
+      finding = DB[:findings].first(id: finding_id)
+
+      assert_equal 'test: webhook path (throwaway)', finding[:issue_title]
+      assert_equal 'https://github.com/kylesnowschwartz/superset/issues/4', finding[:issue_url]
+    end
+
+    def test_preview_fetches_missing_issue_details_and_stores_them
+      finding_id = record_finding(4, issue_title: nil, issue_url: 'https://github.com/kylesnowschwartz/superset/issues/4')
+      stub_request(:get, ISSUE_URL).to_return(status: 200, body: issue_fixture.to_json, headers: JSON_HEADER)
+
+      assert_equal :previewed, @dispatcher.preview(4)
+
+      assert_requested :get, ISSUE_URL, times: 1
+      assert_includes @out.string, 'titled "test: webhook path (throwaway)"'
+      assert_equal 'test: webhook path (throwaway)', DB[:findings].first(id: finding_id)[:issue_title]
+      assert_equal 0, DB[:sessions].count
+    end
+
+    def test_present_issue_details_are_not_fetched
+      record_finding(4)
+
+      @dispatcher.dispatch(4)
+
+      assert_not_requested :get, ISSUE_URL
     end
 
     def test_existing_fix_branch_is_already_dispatched_without_a_post
@@ -170,8 +241,12 @@ module SLA
       true
     end
 
+    def issue_fixture
+      JSON.parse(fixture('github/github_issues_opened.json')).fetch('issue')
+    end
+
     def record_finding(issue_number, **overrides)
-      issue = JSON.parse(fixture('github/github_issues_opened.json')).fetch('issue')
+      issue = issue_fixture
       finding = FindingBlock.parse(issue['body'])
       DB[:findings].insert({
         issue_number: issue_number, issue_title: issue['title'], issue_url: issue['html_url'],

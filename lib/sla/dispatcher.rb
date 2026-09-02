@@ -9,8 +9,13 @@ module SLA
   # Starts the one Devin session that remediates a recorded finding and records
   # it in the sessions table. A finding without a fix version is never dispatched,
   # and neither is one whose fix branch or pull request already exists on GitHub.
+  #
+  # The sessions row is inserted as a reservation before the Devin API is called,
+  # so the unique index on finding_id decides which of two racing dispatches
+  # spends ACUs; the loser never reaches Devin.
   class Dispatcher
     TAG = 'sla-remediation'
+    RESERVED_STATUS = 'dispatching'
 
     def initialize(db:, devin:, github:, repo:, max_acu_limit: 3, out: $stdout)
       @db = db
@@ -28,8 +33,8 @@ module SLA
       return :not_fixable if finding[:fix_version].nil?
       return :already_dispatched if dispatched?(finding) || remediation_exists?(finding)
 
-      session = @devin.create_session(**session_request(finding))
-      record(finding, session)
+      finding = with_issue_details(finding)
+      session = create_session(finding, reserve(finding))
       @out.puts "dispatched issue ##{issue_number} → #{session.url}"
       :dispatched
     rescue Sequel::UniqueConstraintViolation
@@ -43,7 +48,7 @@ module SLA
       return :not_found unless finding
       return :not_fixable if finding[:fix_version].nil?
 
-      request = session_request(finding)
+      request = session_request(with_issue_details(finding))
       @out.puts request[:prompt]
       @out.puts JSON.pretty_generate(request)
       :previewed
@@ -86,10 +91,32 @@ module SLA
       true
     end
 
-    def record(finding, session)
-      sessions.insert(finding_id: finding[:id], devin_session_id: session.session_id, status: session.status,
-                      status_detail: session.status_detail, started_at: session.created_at,
-                      last_polled_at: Time.now.utc)
+    # Findings recorded without the issue title and URL get them from GitHub, stored on the row.
+    def with_issue_details(finding)
+      return finding unless finding[:issue_title].nil? || finding[:issue_url].nil?
+
+      issue = @github.issue(@repo, finding[:issue_number])
+      details = { issue_title: issue.title, issue_url: issue.html_url }
+      findings.where(id: finding[:id]).update(details)
+      finding.merge(details)
+    end
+
+    def reserve(finding)
+      sessions.insert(finding_id: finding[:id], status: RESERVED_STATUS, last_polled_at: Time.now.utc)
+    end
+
+    # Creates the Devin session and fills in the reserved row; the reservation is
+    # released when the session cannot be created.
+    def create_session(finding, reservation_id)
+      session = begin
+        @devin.create_session(**session_request(finding))
+      rescue StandardError
+        sessions.where(id: reservation_id).delete
+        raise
+      end
+      sessions.where(id: reservation_id).update(devin_session_id: session.session_id, status: session.status,
+                                                status_detail: session.status_detail, started_at: session.created_at)
+      session
     end
 
     def findings
