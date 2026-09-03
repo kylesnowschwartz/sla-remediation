@@ -136,8 +136,13 @@ module SLA
         ci_repairs.positive?
       end
 
-      # The pull request is open with red checks; a closed one is red for good
-      # and the tracker has stopped looking at it.
+      # The pull request was closed without being merged: nothing landed, and
+      # the tracker has stopped looking at it.
+      def closed?
+        record[:pr_state] == 'closed'
+      end
+
+      # The pull request is open with red checks.
       def red?
         record[:pr_state] == 'open' && record[:pr_checks] == 'failure'
       end
@@ -151,9 +156,12 @@ module SLA
 
       # When the pull request turned green: its merge time, else the time its
       # checks last completed while they are passing (a later push that goes
-      # green again moves this forward), or nil while it has not.
+      # green again moves this forward), or nil while it has not. Green checks
+      # on a pull request closed without merging fixed nothing.
       def green_at
-        record[:pr_merged_at] || (record[:pr_checks] == 'success' ? record[:pr_checks_at] : nil)
+        return record[:pr_merged_at] if record[:pr_merged_at]
+
+        record[:pr_checks_at] if record[:pr_checks] == 'success' && !closed?
       end
 
       # Seconds from the session's start to the pull request turning green, or
@@ -173,7 +181,7 @@ module SLA
         !(acus_consumed.nil? || acus_consumed.zero?)
       end
 
-      # "running/finished → settled", or just "running/finished" before the
+      # "running/finished → reported", or just "running/finished" before the
       # session has closed.
       def session_status
         record[:outcome] ? "#{status_line} → #{record[:outcome]}" : status_line
@@ -225,13 +233,15 @@ module SLA
 
       # met/late once the pull request is merged or its checks are green,
       # judged by when that happened against the due date; otherwise breached
-      # once the due date has passed, repairing while an open pull request's
+      # once the due date has passed, closed while the pull request was closed
+      # unmerged inside the window, repairing while an open pull request's
       # checks are red inside the window on a commit the session has been
       # asked to fix, ci failing while they are red otherwise, and in progress
-      # while checks are pending or unobserved (or the pull request is closed).
+      # while checks are pending or unobserved.
       def pr_sla_word(due_at)
         return (green_at <= due_at ? 'met' : 'late') if green_at
         return 'breached' if now > due_at
+        return 'closed' if closed?
         return 'repairing' if repairing?
         return 'ci failing' if red?
 

@@ -35,5 +35,5 @@ One per slice, in data-flow order:
 - **Policy**: `SECURITY-SLA.md` in the target repo; days allowed per severity.
 - **Due date**: filed time plus the policy's days for the finding's severity.
 - **Session**: one Devin session, one `sessions` row, one finding.
-- **Outcome**: the tracker's final judgement of a session: `settled` or `stalled`.
-- **SLA word**: the status page's one-word state: `met`, `late`, `breached`, `stalled`, `in progress`, `waiting`.
+- **Outcome**: the tracker's final judgement of a session: `reported` (stopped with a report or a pull request; not a judgement of the fix) or `stalled`.
+- **SLA word**: the status page's one-word state: `met`, `late`, `breached`, `closed`, `repairing`, `ci failing`, `stalled`, `in progress`, `waiting`.

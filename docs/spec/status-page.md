@@ -21,14 +21,18 @@ First rule that applies wins.
 
 - **PAGE-06** Pull request merged, or checks `success`, at or before the due date → `met`.
 - **PAGE-07** Pull request green (merged or checks passed) after the due date → `late`.
-- **PAGE-07A** Checks `pending` or not yet observed, or the pull request `closed` unmerged, due date not passed → `in progress`.
+  - a pull request `closed` unmerged is never green: its checks passing counts for nothing (PAGE-07C)
+- **PAGE-07A** Checks `pending` or not yet observed on an open pull request, due date not passed → `in progress`.
 - **PAGE-07B** Open pull request, checks `failure` at the sha last sent back to the session (`ci_repairs` above 0, `ci_repair_sha` equal to `pr_head_sha`), inside the window → `repairing`.
   - tagged `[REPAIRING]`, coloured as `in progress`
   - checks next observed `failure` on a later sha → `ci failing` again (PAGE-08)
-  - a pull request closed without merging is never `repairing`, whatever its shas say
+- **PAGE-07C** Pull request `closed` unmerged, inside the window → `closed`, whatever its checks or shas say.
+  - tagged `[CLOSED]`, coloured as `stalled`
+  - never `met`, `repairing` or `ci failing`; `breached` once the due date passes (PAGE-09)
+  - not counted as fixed and excluded from the median time to green
 - **PAGE-08** Open pull request, checks `failure` inside the window, PAGE-07B not applying → `ci failing`.
   - tagged `[CI FAILING]`, coloured as `breached`/`late`
-- **PAGE-09** No green pull request past the due date → `breached`, whatever the checks say or if stalled.
+- **PAGE-09** No green pull request past the due date → `breached`, whatever the checks say, or if stalled or closed.
 - **PAGE-10** No pull request, due date not passed, session outcome `stalled` → `stalled`.
 - **PAGE-11** Sessions row but no pull request, inside the window → `in progress`, session id or not.
 - **PAGE-12** No pull request, no sessions row, inside the window → `waiting`.
@@ -76,9 +80,10 @@ First rule that applies wins.
 - PAGE-05: `test/app_test.rb` test_house_style_is_served
 - PAGE-06: `test/status_page_test.rb` test_met_when_the_pull_request_merged_before_the_due_date, test_met_when_the_pull_request_checks_went_green_before_the_due_date
 - PAGE-07: `test/status_page_test.rb` test_late_when_the_pull_request_merged_after_the_due_date
-- PAGE-07A: `test/status_page_test.rb` test_in_progress_when_the_pull_requests_checks_are_pending, test_a_pull_request_without_observed_checks_yet_is_in_progress_then_breached, test_a_pull_request_closed_without_merging_is_neither_repairing_nor_ci_failing
-- PAGE-07B: `test/status_page_test.rb` test_repairing_when_checks_are_red_on_the_commit_the_session_was_asked_to_fix, test_ci_failing_again_once_the_checks_are_red_on_a_commit_after_the_last_repair, test_repairs_do_not_change_the_word_while_checks_are_pending_green_or_past_due, test_a_pull_request_closed_without_merging_is_neither_repairing_nor_ci_failing; `test/app_test.rb` test_status_page_shows_a_pull_request_the_session_is_repairing
-- PAGE-08: `test/status_page_test.rb` test_ci_failing_when_checks_are_red_inside_the_window, test_ci_failing_again_once_the_checks_are_red_on_a_commit_after_the_last_repair, test_a_pull_request_closed_without_merging_is_neither_repairing_nor_ci_failing
+- PAGE-07A: `test/status_page_test.rb` test_in_progress_when_the_pull_requests_checks_are_pending, test_a_pull_request_without_observed_checks_yet_is_in_progress_then_breached
+- PAGE-07B: `test/status_page_test.rb` test_repairing_when_checks_are_red_on_the_commit_the_session_was_asked_to_fix, test_ci_failing_again_once_the_checks_are_red_on_a_commit_after_the_last_repair, test_repairs_do_not_change_the_word_while_checks_are_pending_green_or_past_due, test_a_pull_request_closed_without_merging_reads_closed_whatever_its_checks_say; `test/app_test.rb` test_status_page_shows_a_pull_request_the_session_is_repairing
+- PAGE-07C: `test/status_page_test.rb` test_a_pull_request_closed_without_merging_reads_closed_whatever_its_checks_say, test_green_checks_on_a_pull_request_closed_without_merging_are_not_a_fix
+- PAGE-08: `test/status_page_test.rb` test_ci_failing_when_checks_are_red_inside_the_window, test_ci_failing_again_once_the_checks_are_red_on_a_commit_after_the_last_repair, test_a_pull_request_closed_without_merging_reads_closed_whatever_its_checks_say
 - PAGE-09: `test/status_page_test.rb` test_breached_when_there_is_no_pull_request_and_the_due_date_has_passed, test_breached_takes_precedence_over_a_stalled_session_once_the_due_date_has_passed, test_breached_when_checks_are_still_red_past_the_due_date, test_breached_when_a_pull_request_is_open_but_never_went_green_past_the_due_date, test_a_pull_request_without_observed_checks_yet_is_in_progress_then_breached
 - PAGE-10: `test/status_page_test.rb` test_stalled_when_the_session_stopped_without_a_pull_request_inside_the_window
 - PAGE-11: `test/status_page_test.rb` test_in_progress_when_a_session_exists_without_a_pull_request_inside_the_window, test_a_reserved_session_row_without_a_devin_session_id_counts_as_in_progress_without_a_link

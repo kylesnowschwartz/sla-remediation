@@ -15,7 +15,7 @@ module SLA
   # structured output against the schema the session was given, and hands the
   # finding to the notifier the first time a pull request appears.
   #
-  # A row is open while its outcome is empty. It closes as "settled" once the
+  # A row is open while its outcome is empty. It closes as "reported" once the
   # session has stopped with a report or a pull request, or as "stalled" once it
   # has stopped with neither; closed rows are never fetched again from Devin.
   #
@@ -30,13 +30,13 @@ module SLA
   # A session still working is left alone until it stops; the red commit is
   # sent then.
   class Tracker
-    SETTLED = 'settled'
+    REPORTED = 'reported'
     STALLED = 'stalled'
     MERGED = 'merged'
     MAX_CI_REPAIRS = 2
     UNRESOLVED_CHECKS = %w[pending failure none].freeze
     PR_URL_PATTERN = %r{github\.com/(?<repo>[^/]+/[^/]+)/pull/(?<number>\d+)}
-    EMPTY_SUMMARY = { polled: 0, settled: 0, stalled: 0, notified: 0, errors: 0 }.freeze
+    EMPTY_SUMMARY = { polled: 0, reported: 0, stalled: 0, notified: 0, errors: 0 }.freeze
 
     def initialize(db:, devin:, notifier:, github: nil, schema: RemediationPrompt.schema, log: Logger.new($stdout))
       @db = db
@@ -49,7 +49,7 @@ module SLA
 
     # Polls the pull request checks of every closed session still being
     # watched, then polls every open session (whose pull request is checked as
-    # part of the poll). Returns {polled:, settled:, stalled:, notified:, errors:}.
+    # part of the poll). Returns {polled:, reported:, stalled:, notified:, errors:}.
     def poll_once
       summary = EMPTY_SUMMARY.dup
       watched_pr_sessions.each { |row| check_pr(row, summary) } if @github
@@ -139,10 +139,12 @@ module SLA
     end
 
     def close(row, session, summary)
-      if session.settled?
-        sessions.where(id: row[:id]).update(outcome: SETTLED, finished_at: session.updated_at)
-        summary[:settled] += 1
-      elsif session.stalled?
+      return unless session.stopped?
+
+      if session.reported?
+        sessions.where(id: row[:id]).update(outcome: REPORTED, finished_at: session.updated_at)
+        summary[:reported] += 1
+      else
         sessions.where(id: row[:id]).update(outcome: STALLED)
         summary[:stalled] += 1
         warn_stalled(row, session)

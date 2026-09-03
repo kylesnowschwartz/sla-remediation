@@ -29,7 +29,7 @@ module SLA
                            status: 'running', status_detail: 'waiting_for_user', started_at: Time.now.utc - 900,
                            last_polled_at: Time.now.utc, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9',
                            pr_state: 'open', pr_notified_at: Time.now.utc, pr_checks: 'success',
-                           pr_checks_at: Time.now.utc, outcome: 'settled')
+                           pr_checks_at: Time.now.utc, outcome: 'reported')
 
       get '/'
 
@@ -44,7 +44,7 @@ module SLA
       assert_includes body, 'href="https://github.com/kylesnowschwartz/superset/issues/8">#8</a>'
       assert_includes body, 'href="https://github.com/kylesnowschwartz/superset/issues/12">#12</a>'
       assert_includes body, '[SLA high] urllib3 2.4.0 → 2.7.0'
-      assert_includes body, 'href="https://app.devin.ai/sessions/812ce7c3f89f4e88bce68dc03c9dd462">settled</a>'
+      assert_includes body, 'href="https://app.devin.ai/sessions/812ce7c3f89f4e88bce68dc03c9dd462">reported</a>'
       assert_includes body, 'href="https://github.com/kylesnowschwartz/superset/pull/9">#9</a>'
       pr_link = 'href="https://github.com/kylesnowschwartz/superset/pull/9">#9</a>'
       assert_match(%r{#{Regexp.escape(pr_link)}\s*<span class="muted">open</span>}, body)
@@ -68,7 +68,7 @@ module SLA
                            last_polled_at: Time.now.utc, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9',
                            pr_state: 'open', pr_notified_at: Time.now.utc, pr_checks: 'failure',
                            pr_checks_at: Time.now.utc, pr_head_sha: 'a1b2c3', ci_repair_sha: 'a1b2c3', ci_repairs: 1,
-                           outcome: 'settled')
+                           outcome: 'reported')
 
       get '/'
 

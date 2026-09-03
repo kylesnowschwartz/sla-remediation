@@ -29,13 +29,10 @@ module SLA
         STOPPED_STATUSES.include?(status) || STOPPED_DETAILS.include?(status_detail)
       end
 
-      # The session has produced something to act on: structured output or a pull request.
+      # The session has produced something to act on: structured output or a
+      # pull request. Stopped and reported is the tracker's `reported` outcome.
       def reported?
         !structured_output.nil? || !pull_requests.empty?
-      end
-
-      def settled?
-        stopped? && reported?
       end
 
       def stalled?
