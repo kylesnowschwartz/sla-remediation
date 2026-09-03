@@ -47,29 +47,33 @@ its checks passed) after the due date, THEN the word SHALL be `late`.
 Proof: test/status_page_test.rb test_late_when_the_pull_request_merged_after_the_due_date
 
 **PAGE-07A** IF the finding has a pull request whose checks are `pending`
-(or not yet observed) and the due date has not passed, THEN the word SHALL
-be `in progress`.
+(or not yet observed), or whose pull request is `closed` without merging,
+and the due date has not passed, THEN the word SHALL be `in progress`.
 Proof: test/status_page_test.rb test_in_progress_when_the_pull_requests_checks_are_pending,
-test_a_pull_request_without_observed_checks_yet_is_in_progress_then_breached
+test_a_pull_request_without_observed_checks_yet_is_in_progress_then_breached,
+test_a_pull_request_closed_without_merging_is_neither_repairing_nor_ci_failing
 
-**PAGE-07B** IF the finding has a pull request whose checks are `failure`
-at the head sha the tracker last sent back to the session (`ci_repairs`
-above 0 and `ci_repair_sha` equal to `pr_head_sha`) and the due date has
-not passed, THEN the word SHALL be `repairing`, tagged `[REPAIRING]` and
-coloured the same as `in progress`. WHEN the checks are next observed
-`failure` on a later sha (one the tracker has not sent back), the word
-SHALL be `ci failing` again (PAGE-08).
+**PAGE-07B** IF the finding has an `open` pull request whose checks are
+`failure` at the head sha the tracker last sent back to the session
+(`ci_repairs` above 0 and `ci_repair_sha` equal to `pr_head_sha`) and the
+due date has not passed, THEN the word SHALL be `repairing`, tagged
+`[REPAIRING]` and coloured the same as `in progress`. WHEN the checks are
+next observed `failure` on a later sha (one the tracker has not sent back),
+the word SHALL be `ci failing` again (PAGE-08). A pull request closed
+without merging is never `repairing`, whatever its shas say.
 Proof: test/status_page_test.rb test_repairing_when_checks_are_red_on_the_commit_the_session_was_asked_to_fix,
 test_ci_failing_again_once_the_checks_are_red_on_a_commit_after_the_last_repair,
-test_repairs_do_not_change_the_word_while_checks_are_pending_green_or_past_due;
+test_repairs_do_not_change_the_word_while_checks_are_pending_green_or_past_due,
+test_a_pull_request_closed_without_merging_is_neither_repairing_nor_ci_failing;
 test/app_test.rb test_status_page_shows_a_pull_request_the_session_is_repairing
 
-**PAGE-08** IF the finding has a pull request whose checks are `failure`
-and the due date has not passed, and PAGE-07B does not apply, THEN the word
-SHALL be `ci failing`, tagged `[CI FAILING]` and coloured the same as
-`breached`/`late`.
+**PAGE-08** IF the finding has an `open` pull request whose checks are
+`failure` and the due date has not passed, and PAGE-07B does not apply,
+THEN the word SHALL be `ci failing`, tagged `[CI FAILING]` and coloured the
+same as `breached`/`late`.
 Proof: test/status_page_test.rb test_ci_failing_when_checks_are_red_inside_the_window,
-test_ci_failing_again_once_the_checks_are_red_on_a_commit_after_the_last_repair
+test_ci_failing_again_once_the_checks_are_red_on_a_commit_after_the_last_repair,
+test_a_pull_request_closed_without_merging_is_neither_repairing_nor_ci_failing
 
 **PAGE-09** IF there is no pull request and now is after the due date, THEN
 the word SHALL be `breached`, even when the session stalled; a pull

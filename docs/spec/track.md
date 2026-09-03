@@ -122,13 +122,16 @@ test_a_pull_request_closed_without_merging_stops_being_watched
 
 **TRACK-23** WHEN GitHub answers, THE tracker SHALL record the pull
 request's state as `merged`, `closed`, or `open` from GitHub (replacing what
-the session reported), the aggregate check state (`success` when every
-completed run passed, was neutral, or was skipped; `failure` when any run
-failed; `pending` while any run is unfinished; `none` when there are no
-runs), and the merge time once.
+the session reported), the aggregate check state over every check run on
+the head commit, read page by page until GitHub's `total_count` is reached
+or a page comes back empty (`success` when every completed run passed, was
+neutral, or was skipped; `failure` when any run failed; `pending` while any
+run is unfinished; `none` when there are no runs), and the merge time once.
 Proof: test/tracker_test.rb test_a_merged_pull_request_records_the_merge_time_and_state_and_stops_being_watched,
 test_a_pull_request_closed_without_merging_stops_being_watched;
 test/github_client_test.rb test_pull_request_status_is_success_when_every_run_completed_and_passed,
+test_pull_request_status_reads_every_page_of_check_runs,
+test_pull_request_status_stops_paging_at_an_empty_page_when_the_count_is_off,
 test_pull_request_status_is_failure_when_a_completed_run_failed,
 test_pull_request_status_is_pending_without_a_time_when_a_run_has_not_completed,
 test_pull_request_status_is_none_when_there_are_no_check_runs_and_reads_the_merge
@@ -163,18 +166,20 @@ test_a_pull_request_url_off_github_is_an_error_not_a_crash
 
 **TRACK-28** WHEN a row's pull request is `open` and its checks are
 `failure` at a head sha that differs from the row's `ci_repair_sha`, THE
-tracker SHALL fetch that sha's failed check runs from GitHub (each run's
-name, `details_url`, and the first 40 lines of `output.summary`, or of
-`output.text` when there is no summary; conclusions `failure`, `timed_out`,
-`cancelled`, `action_required`; job logs are not downloaded), render
-`prompts/repair_ci.md.erb` with the pull request URL, branch, sha, and those
-runs, and send it as a message to the Devin session that opened the pull
-request. It SHALL NOT create a new session.
+tracker SHALL take that sha's failed check runs from the check runs it
+read for TRACK-23 (each run's name, `details_url`, and the first 40 lines
+of `output.summary`, or of `output.text` when there is no summary;
+conclusions `failure`, `timed_out`, `cancelled`, `action_required`; the
+endpoint is not read a second time and job logs are not downloaded),
+render `prompts/repair_ci.md.erb` with the pull request URL, branch, sha,
+and those runs, and send it as a message to the Devin session that opened
+the pull request. It SHALL NOT create a new session.
 Proof: test/tracker_test.rb test_red_checks_send_the_failed_runs_to_the_session_once_per_commit,
 test_red_checks_seen_during_an_open_poll_message_the_session_before_it_settles;
 test/github_client_test.rb test_failed_check_runs_keeps_only_the_failure_conclusions_with_name_url_and_summary,
 test_failed_check_runs_falls_back_to_the_output_text_and_keeps_only_the_first_forty_lines,
 test_failed_check_runs_is_empty_when_nothing_failed_or_the_output_is_absent,
+test_pull_request_status_reads_every_page_of_check_runs,
 test_pull_request_status_reads_the_head_branch;
 test/repair_prompt_test.rb test_renders_the_flask_example_with_both_escape_import_errors,
 test_lists_a_job_without_output_as_just_its_name_and_url
@@ -201,6 +206,14 @@ Proof: test/tracker_test.rb test_a_failed_repair_message_is_counted_and_retried_
 that is merged or closed, whatever its checks say.
 Proof: test/tracker_test.rb test_a_merged_pull_request_records_the_merge_time_and_state_and_stops_being_watched,
 test_a_pull_request_closed_without_merging_stops_being_watched
+
+**TRACK-33** WHILE the session is `running` with a status detail other than
+`waiting_for_user`, `finished`, or `inactivity` (it is still working), THE
+tracker SHALL record the red checks but send no repair message and spend no
+repair, logging once per red sha that the repair waits; WHEN the session
+stops, THE tracker SHALL send the message for that sha on the next round
+as TRACK-28 says.
+Proof: test/tracker_test.rb test_red_checks_wait_for_a_working_session_to_stop_before_it_is_asked_to_repair
 
 ## The polling round
 
@@ -237,8 +250,7 @@ command-line entry point has no tests.
 ## Not specified
 
 - The wording of log lines.
-- Legacy commit statuses; only the Checks API is read, and only the first
-  100 check runs on the head commit.
+- Legacy commit statuses; only the Checks API is read.
 - Whether a pull request that turns green, then red again, is judged by
   its earlier green; the tracker records the latest state, and the status
   page spec decides what that means.

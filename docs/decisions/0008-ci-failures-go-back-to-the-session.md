@@ -18,4 +18,4 @@ The tracker is where the CI result is known. It already polls the pull request's
 
 The cap keeps a session from looping on a failure it cannot fix. One message per red head sha (`ci_repair_sha`), at most `MAX_CI_REPAIRS` (2) per session (`ci_repairs`). Past the cap the tracker logs it and the row stays `[CI FAILING]` for a human; inside it, the status page reads `[REPAIRING]` so the leader can tell a failure being worked on from one that is waiting for someone.
 
-A message that fails to send is counted as an error and retried next round; the repair columns are written only after the message is accepted, so a failed send never spends a repair.
+A message that fails to send is counted as an error and retried next round; the repair columns are written only after the message is accepted, so a failed send never spends a repair. A session that is still working when its checks go red is not interrupted either: the message, and the repair it spends, wait until the session stops.

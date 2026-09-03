@@ -54,7 +54,8 @@ module SLA
                    headers: JSON_HEADER)
       stub_request(:get, "https://api.github.com/repos/#{repo}/commits/#{sha}/check-runs")
         .with(query: { per_page: '100' })
-        .to_return(status: 200, body: { check_runs: check_runs }.to_json, headers: JSON_HEADER)
+        .to_return(status: 200, body: { total_count: check_runs.size, check_runs: check_runs }.to_json,
+                   headers: JSON_HEADER)
     end
 
     # Stubs the session's messages endpoint and collects every message text
@@ -205,8 +206,42 @@ module SLA
 
       assert_equal 1, @messages.size
       assert_equal 1, row[:ci_repairs]
-      assert_requested :get, %r{api\.github\.com/repos/kylesnowschwartz/superset/commits/a1b2c3/check-runs}, times: 4
+      assert_requested :get, %r{api\.github\.com/repos/kylesnowschwartz/superset/commits/a1b2c3/check-runs}, times: 3
       refute_match(/WARN|ERROR/, @log_io.string)
+    end
+
+    def test_red_checks_wait_for_a_working_session_to_stop_before_it_is_asked_to_repair
+      row_id = record_session(8, WORKING_ID)
+      stub_session(WORKING_ID, hand_written(WORKING_ID, status: 'running', status_detail: 'working',
+                                                        pull_requests: [{ 'pr_url' => PR_URL, 'pr_state' => 'open' }]))
+      stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3', check_runs: [RED_RUN])
+      stub_message(WORKING_ID)
+
+      @tracker.poll_once
+      @tracker.poll_once
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal 'failure', row[:pr_checks]
+      assert_equal 'a1b2c3', row[:pr_head_sha]
+      assert_nil row[:ci_repair_sha]
+      assert_equal 0, row[:ci_repairs]
+      assert_nil row[:outcome]
+      assert_empty @messages
+      deferrals = @log_io.string.scan("INFO -- : tracker issue #8: pull request #{PR_URL} checks are red at a1b2c3 " \
+                                      "while session #{WORKING_ID} is still working; the repair waits until it stops")
+
+      assert_equal 1, deferrals.size
+
+      stub_session(WORKING_ID, hand_written(WORKING_ID, status: 'running', status_detail: 'waiting_for_user',
+                                                        pull_requests: [{ 'pr_url' => PR_URL, 'pr_state' => 'open' }]))
+      summary = @tracker.poll_once
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal({ polled: 1, settled: 1, stalled: 0, notified: 0, errors: 0 }, summary)
+      assert_equal 'a1b2c3', row[:ci_repair_sha]
+      assert_equal 1, row[:ci_repairs]
+      assert_equal 1, @messages.size
+      assert_match(/repair 1 of 2/, @log_io.string)
     end
 
     def test_a_new_red_commit_gets_a_second_repair_and_the_third_is_left_for_a_human

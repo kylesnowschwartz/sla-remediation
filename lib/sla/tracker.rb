@@ -5,6 +5,7 @@ require 'json_schemer'
 require 'logger'
 require 'sequel'
 
+require_relative 'devin_client/session'
 require_relative 'remediation_prompt'
 require_relative 'repair_prompt'
 
@@ -26,6 +27,8 @@ module SLA
   # When the checks are red on a commit no repair has been asked for, the
   # failed check runs are sent to the session that opened the pull request
   # (a message, not a new session), at most MAX_CI_REPAIRS times per session.
+  # A session still working is left alone until it stops; the red commit is
+  # sent then.
   class Tracker
     SETTLED = 'settled'
     STALLED = 'stalled'
@@ -214,13 +217,15 @@ module SLA
     end
 
     # Sends the failed check runs to the session once per red head commit of
-    # an open pull request, until the session has been asked MAX_CI_REPAIRS
-    # times; after that the row stays red for a human.
+    # an open pull request, once the session has stopped working, until the
+    # session has been asked MAX_CI_REPAIRS times; after that the row stays
+    # red for a human.
     def repair_changes(row, status)
       return {} unless unrepaired_red?(row, status)
       return log_repairs_exhausted(row, status) if row[:ci_repairs] >= MAX_CI_REPAIRS
+      return log_repair_deferred(row, status) if session_working?(row)
 
-      failures = @github.failed_check_runs(pull_request_ref(row).first, status.head_sha)
+      failures = @github.failed_check_runs(status)
       @devin.send_message(row[:devin_session_id], repair_message(row, status, failures))
       log_repair_sent(row, status, failures)
       { ci_repair_sha: status.head_sha, ci_repairs: row[:ci_repairs] + 1 }
@@ -228,6 +233,12 @@ module SLA
 
     def unrepaired_red?(row, status)
       status.state == 'open' && status.checks == 'failure' && row[:ci_repair_sha] != status.head_sha
+    end
+
+    # Whether the session is still running and has not stopped for input; the
+    # row holds what Devin reported on this poll (or the last, for a closed row).
+    def session_working?(row)
+      row[:status] == 'running' && !DevinClient::Session::STOPPED_DETAILS.include?(row[:status_detail])
     end
 
     def repair_message(row, status, failures)
@@ -240,13 +251,29 @@ module SLA
                 "(repair #{row[:ci_repairs] + 1} of #{MAX_CI_REPAIRS})")
     end
 
+    # Logs once per red commit, the first round it is seen red.
+    def log_repair_deferred(row, status)
+      return {} if red_before?(row, status)
+
+      @log.info("tracker issue ##{issue_number(row)}: pull request #{row[:pr_url]} checks are red at " \
+                "#{status.head_sha} while session #{row[:devin_session_id]} is still working; " \
+                'the repair waits until it stops')
+      {}
+    end
+
     # Warns once per red commit, the first round it is seen red.
     def log_repairs_exhausted(row, status)
-      return {} if row[:pr_checks] == 'failure' && row[:pr_head_sha] == status.head_sha
+      return {} if red_before?(row, status)
 
       @log.warn("tracker issue ##{issue_number(row)}: pull request #{row[:pr_url]} checks are red at " \
                 "#{status.head_sha} after #{MAX_CI_REPAIRS} repairs; leaving it for a human")
       {}
+    end
+
+    # Whether the row already had this commit's checks recorded as red before
+    # this round's write.
+    def red_before?(row, status)
+      row[:pr_checks] == 'failure' && row[:pr_head_sha] == status.head_sha
     end
 
     def log_session_error(row, error)

@@ -76,16 +76,18 @@ flowchart LR
    boundary). Terminal: `exit`/`error`; `suspended`+`inactivity` = stalled.
 7. **Service → GitHub.** On first PR detection the Notifier comments on the
    issue with the PR link and session summary. (Phase 2: also Slack.)
-7b. **Service ← GitHub → Devin.** Every round the tracker reads the PR's
-   check runs. When the checks are red on an open PR at a head sha it has not
-   yet sent back, it fetches the failed check runs (`name`, `details_url`,
-   first 40 lines of `output.summary`/`output.text`), renders
-   `prompts/repair_ci.md.erb`, and `POST`s it as a message to the same
-   session; then it writes `ci_repair_sha` and increments `ci_repairs`. The
-   session pushes to the same branch, CI reruns, and step 7b judges the new
-   sha. Capped at `Tracker::MAX_CI_REPAIRS` (2) per session; past the cap the
-   tracker logs once per red sha and leaves the PR for a human. No new
-   session is created (ADR 0008).
+7b. **Service ← GitHub → Devin.** Every round the tracker reads every page
+   of the PR's check runs (one fetch, kept on `PullRequestStatus`). When the
+   checks are red on an open PR at a head sha it has not yet sent back, and
+   the session is not still working, it filters those runs to the failed
+   ones (`name`, `details_url`, first 40 lines of
+   `output.summary`/`output.text`), renders `prompts/repair_ci.md.erb`, and
+   `POST`s it as a message to the same session; then it writes
+   `ci_repair_sha` and increments `ci_repairs`. The session pushes to the
+   same branch, CI reruns, and step 7b judges the new sha. Capped at
+   `Tracker::MAX_CI_REPAIRS` (2) per session; past the cap the tracker logs
+   once per red sha and leaves the PR for a human. No new session is created
+   (ADR 0008).
 8. **DB → humans.** The status page lists findings with SLA due, session
    state, PR link, ACUs consumed, time-to-PR.
 

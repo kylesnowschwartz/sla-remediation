@@ -14,6 +14,8 @@ module SLA
     REFS_URL = 'https://api.github.com/repos/kylesnowschwartz/superset/git/refs/heads/fix/urllib3-sla-4'
     REQUIREMENTS_URL = 'https://api.github.com/repos/kylesnowschwartz/superset/contents/requirements/base.txt'
     CHECK_RUNS_URL = 'https://api.github.com/repos/kylesnowschwartz/superset/commits/abc123/check-runs'
+    GREEN = { name: 'unit-tests', status: 'completed', conclusion: 'success', completed_at: '2026-09-02T08:40:00Z',
+              details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/1' }.freeze
     HEADERS = {
       'Authorization' => "Bearer #{TOKEN}",
       'Accept' => 'application/vnd.github+json',
@@ -204,9 +206,13 @@ module SLA
       stub_request(:get, "#{PULLS_URL}/9")
         .to_return(status: 200, body: { number: 9, head: { sha: 'abc123' } }.merge(pull).to_json,
                    headers: json_header)
+      stub_check_runs(check_runs)
+    end
+
+    def stub_check_runs(check_runs)
+      body = { total_count: check_runs.size, check_runs: check_runs }.to_json
       stub_request(:get, CHECK_RUNS_URL).with(query: { per_page: '100' })
-                                        .to_return(status: 200, body: { check_runs: check_runs }.to_json,
-                                                   headers: json_header)
+                                        .to_return(status: 200, body: body, headers: json_header)
     end
 
     def test_pull_request_status_is_success_when_every_run_completed_and_passed
@@ -225,6 +231,50 @@ module SLA
       assert_equal true, status.mergeable
       assert_equal 'success', status.checks
       assert_equal Time.utc(2026, 9, 2, 8, 44, 0), status.checks_at
+      assert_equal 3, status.check_runs.size
+    end
+
+    def test_pull_request_status_reads_every_page_of_check_runs
+      page1 = Array.new(100) { |n| { name: "job-#{n}", status: 'completed', conclusion: 'success' } }
+      page2 = Array.new(49) { |n| { name: "job-#{100 + n}", status: 'completed', conclusion: 'success' } } +
+              [{ name: 'test-sqlite', status: 'completed', conclusion: 'failure', completed_at: '2026-09-02T08:50:00Z',
+                 details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/150' }]
+      stub_request(:get, "#{PULLS_URL}/9")
+        .to_return(status: 200, body: { number: 9, state: 'open', merged: false, head: { sha: 'abc123' } }.to_json,
+                   headers: json_header)
+      stub_request(:get, CHECK_RUNS_URL).with(query: { per_page: '100' })
+                                        .to_return(status: 200, body: { total_count: 150, check_runs: page1 }.to_json,
+                                                   headers: json_header)
+      stub_request(:get, CHECK_RUNS_URL).with(query: { per_page: '100', page: '2' })
+                                        .to_return(status: 200, body: { total_count: 150, check_runs: page2 }.to_json,
+                                                   headers: json_header)
+
+      status = @client.pull_request_status('kylesnowschwartz/superset', 9)
+
+      assert_requested :get, CHECK_RUNS_URL, query: { per_page: '100' }, headers: HEADERS
+      assert_requested :get, CHECK_RUNS_URL, query: { per_page: '100', page: '2' }, headers: HEADERS
+      assert_not_requested :get, CHECK_RUNS_URL, query: { per_page: '100', page: '3' }
+      assert_equal 150, status.check_runs.size
+      assert_equal 'failure', status.checks
+      assert_equal Time.utc(2026, 9, 2, 8, 50, 0), status.checks_at
+      assert_equal ['test-sqlite'], @client.failed_check_runs(status).map(&:name)
+    end
+
+    def test_pull_request_status_stops_paging_at_an_empty_page_when_the_count_is_off
+      stub_request(:get, "#{PULLS_URL}/9")
+        .to_return(status: 200, body: { number: 9, state: 'open', merged: false, head: { sha: 'abc123' } }.to_json,
+                   headers: json_header)
+      stub_request(:get, CHECK_RUNS_URL).with(query: { per_page: '100' })
+                                        .to_return(status: 200, body: { total_count: 3, check_runs: [GREEN] }.to_json,
+                                                   headers: json_header)
+      stub_request(:get, CHECK_RUNS_URL).with(query: { per_page: '100', page: '2' })
+                                        .to_return(status: 200, body: { total_count: 3, check_runs: [] }.to_json,
+                                                   headers: json_header)
+
+      status = @client.pull_request_status('kylesnowschwartz/superset', 9)
+
+      assert_equal 1, status.check_runs.size
+      assert_equal 'success', status.checks
     end
 
     def test_pull_request_status_is_pending_without_a_time_when_a_run_has_not_completed
@@ -266,39 +316,39 @@ module SLA
         .to_return(status: 200, body: { number: 9, state: 'open', merged: false, merged_at: nil, mergeable: true,
                                         head: { sha: 'abc123', ref: 'fix/flask-sla-20' } }.to_json,
                    headers: json_header)
-      stub_request(:get, CHECK_RUNS_URL).with(query: { per_page: '100' })
-                                        .to_return(status: 200, body: { check_runs: [] }.to_json, headers: json_header)
+      stub_check_runs([])
 
       assert_equal 'fix/flask-sla-20', @client.pull_request_status('kylesnowschwartz/superset', 9).head_branch
     end
 
-    def stub_check_runs(check_runs)
-      stub_request(:get, CHECK_RUNS_URL).with(query: { per_page: '100' })
-                                        .to_return(status: 200, body: { check_runs: check_runs }.to_json,
-                                                   headers: json_header)
+    # The status of pull request 9 whose head commit carries the given check runs.
+    def status_with_check_runs(check_runs)
+      stub_pull_and_checks({ state: 'open', merged: false, merged_at: nil, mergeable: true }, check_runs)
+      @client.pull_request_status('kylesnowschwartz/superset', 9)
     end
 
     def test_failed_check_runs_keeps_only_the_failure_conclusions_with_name_url_and_summary
-      stub_check_runs([{ name: 'unit-tests', status: 'completed', conclusion: 'success',
-                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/1',
-                         output: { summary: 'all green' } },
-                       { name: 'integration-tests', status: 'completed', conclusion: 'failure',
-                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/2',
-                         output: { title: 'Process completed with exit code 1.', summary: "2 tests failed\n",
-                                   text: 'ImportError: cannot import name escape' } },
-                       { name: 'lint', status: 'completed', conclusion: 'timed_out',
-                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/3',
-                         output: { summary: nil, text: nil } },
-                       { name: 'e2e', status: 'in_progress', conclusion: nil,
-                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/4',
-                         output: { summary: 'not done' } },
-                       { name: 'docs', status: 'completed', conclusion: 'skipped',
-                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/5',
-                         output: { summary: nil } }])
+      runs = [{ name: 'unit-tests', status: 'completed', conclusion: 'success',
+                details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/1',
+                output: { summary: 'all green' } },
+              { name: 'integration-tests', status: 'completed', conclusion: 'failure',
+                details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/2',
+                output: { title: 'Process completed with exit code 1.', summary: "2 tests failed\n",
+                          text: 'ImportError: cannot import name escape' } },
+              { name: 'lint', status: 'completed', conclusion: 'timed_out',
+                details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/3',
+                output: { summary: nil, text: nil } },
+              { name: 'e2e', status: 'in_progress', conclusion: nil,
+                details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/4',
+                output: { summary: 'not done' } },
+              { name: 'docs', status: 'completed', conclusion: 'skipped',
+                details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/5',
+                output: { summary: nil } }]
+      status = status_with_check_runs(runs)
 
-      failures = @client.failed_check_runs('kylesnowschwartz/superset', 'abc123')
+      failures = @client.failed_check_runs(status)
 
-      assert_requested :get, CHECK_RUNS_URL, query: { per_page: '100' }, headers: HEADERS
+      assert_requested :get, CHECK_RUNS_URL, query: { per_page: '100' }, headers: HEADERS, times: 1
       assert_equal %w[integration-tests lint], failures.map(&:name)
       assert_equal ['https://github.com/kylesnowschwartz/superset/actions/runs/1/job/2',
                     'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/3'], failures.map(&:details_url)
@@ -308,28 +358,24 @@ module SLA
 
     def test_failed_check_runs_falls_back_to_the_output_text_and_keeps_only_the_first_forty_lines
       text = (1..50).map { |n| "line #{n}" }.join("\n")
-      stub_check_runs([{ name: 'integration-tests', status: 'completed', conclusion: 'cancelled',
-                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/2',
-                         output: { summary: '', text: text } },
-                       { name: 'unit-tests', status: 'completed', conclusion: 'action_required',
-                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/6',
-                         output: { summary: "#{text}\n" } }])
+      status = status_with_check_runs([{ name: 'integration-tests', status: 'completed', conclusion: 'cancelled',
+                                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/2',
+                                         output: { summary: '', text: text } },
+                                       { name: 'unit-tests', status: 'completed', conclusion: 'action_required',
+                                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/6',
+                                         output: { summary: "#{text}\n" } }])
 
-      failures = @client.failed_check_runs('kylesnowschwartz/superset', 'abc123')
+      failures = @client.failed_check_runs(status)
 
       assert_equal (1..40).map { |n| "line #{n}" }.join("\n"), failures.fetch(0).output
       assert_equal (1..40).map { |n| "line #{n}" }.join("\n"), failures.fetch(1).output
     end
 
     def test_failed_check_runs_is_empty_when_nothing_failed_or_the_output_is_absent
-      stub_check_runs([{ name: 'unit-tests', status: 'completed', conclusion: 'success',
-                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/1' }])
+      assert_empty @client.failed_check_runs(status_with_check_runs([GREEN]))
 
-      assert_empty @client.failed_check_runs('kylesnowschwartz/superset', 'abc123')
-
-      stub_check_runs([{ name: 'unit-tests', status: 'completed', conclusion: 'failure',
-                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/1' }])
-      failures = @client.failed_check_runs('kylesnowschwartz/superset', 'abc123')
+      status = status_with_check_runs([GREEN.merge(conclusion: 'failure')])
+      failures = @client.failed_check_runs(status)
 
       assert_equal ['unit-tests'], failures.map(&:name)
       assert_nil failures.fetch(0).output

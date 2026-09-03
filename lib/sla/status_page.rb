@@ -136,11 +136,17 @@ module SLA
         ci_repairs.positive?
       end
 
+      # The pull request is open with red checks; a closed one is red for good
+      # and the tracker has stopped looking at it.
+      def red?
+        record[:pr_state] == 'open' && record[:pr_checks] == 'failure'
+      end
+
       # The checks are red on the very commit the session was last asked to
       # repair, so the session is presumed to be working on it; once the
       # checks are observed on a later commit this is false again.
       def repairing?
-        record[:pr_checks] == 'failure' && ci_repairs? && record[:ci_repair_sha] == record[:pr_head_sha]
+        red? && ci_repairs? && record[:ci_repair_sha] == record[:pr_head_sha]
       end
 
       # When the pull request turned green: its merge time, else the time its
@@ -219,15 +225,15 @@ module SLA
 
       # met/late once the pull request is merged or its checks are green,
       # judged by when that happened against the due date; otherwise breached
-      # once the due date has passed, repairing while checks are red inside
-      # the window on a commit the session has been asked to fix, ci failing
-      # while they are red otherwise, and in progress while checks are
-      # pending or unobserved.
+      # once the due date has passed, repairing while an open pull request's
+      # checks are red inside the window on a commit the session has been
+      # asked to fix, ci failing while they are red otherwise, and in progress
+      # while checks are pending or unobserved (or the pull request is closed).
       def pr_sla_word(due_at)
         return (green_at <= due_at ? 'met' : 'late') if green_at
         return 'breached' if now > due_at
         return 'repairing' if repairing?
-        return 'ci failing' if record[:pr_checks] == 'failure'
+        return 'ci failing' if red?
 
         'in progress'
       end

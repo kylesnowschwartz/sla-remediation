@@ -109,6 +109,24 @@ module SLA
       assert_equal 2, row.ci_repairs
     end
 
+    def test_a_pull_request_closed_without_merging_is_neither_repairing_nor_ci_failing
+      finding_id = record_finding(1)
+      record_session(finding_id, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9', pr_state: 'closed',
+                                 pr_notified_at: DUE - 3600, pr_checks: 'failure', pr_checks_at: NOW,
+                                 pr_head_sha: 'a1b2c3', ci_repair_sha: 'a1b2c3', ci_repairs: 1)
+
+      row = page.rows.fetch(0)
+
+      refute_predicate row, :repairing?
+      assert_equal 'in progress', row.sla
+      assert_equal 1, row.ci_repairs
+
+      DB[:sessions].update(ci_repairs: 0, ci_repair_sha: nil)
+
+      assert_equal 'in progress', page.rows.fetch(0).sla
+      assert_equal 'breached', page(now: DUE + 1).rows.fetch(0).sla
+    end
+
     def test_repairs_do_not_change_the_word_while_checks_are_pending_green_or_past_due
       finding_id = record_finding(1)
       record_session(finding_id, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9', pr_state: 'open',
