@@ -90,7 +90,7 @@ The data flows, in the order of a single remediation:
    Uniqueness on issue number makes duplicate deliveries a no-op.
 4. **Service → Devin.** The dispatcher renders the prompt template with the
    finding, then `POST /v3/organizations/{org}/sessions` with `prompt`,
-   `repos`, `tags`, `title`, `resumable: false`, `max_acu_limit`,
+   `repos`, `tags`, `title`, `resumable: true`, `max_acu_limit`,
    `structured_output_schema`. It stores `session_id`, `url`, `status`.
 5. **Devin → GitHub.** The session bumps the pin, verifies with pip-audit,
    opens a PR on the fork referencing the issue, and records its structured
@@ -229,7 +229,7 @@ Repositories are served from `/v3beta1/organizations/{org}/repositories`; the `/
 ## Dispatching
 
 A dispatch (`SLA::Dispatcher`, `lib/sla/dispatcher.rb`) renders `prompts/remediate_dependency.md.erb` for one recorded finding, creates a Devin session through `DevinClient`, and inserts one `sessions` row for the finding; a unique index on `sessions.finding_id` means a finding is dispatched exactly once, ever.
-The session is created with the issue title, `repos: [SLA_REPO]`, `tags: ["sla-remediation", "issue-<n>"]`, `schemas/remediation_result.json` as `structured_output_schema`, `max_acu_limit: 3`, and `resumable: false`.
+The session is created with the issue title, `repos: [SLA_REPO]`, `tags: ["sla-remediation", "issue-<n>"]`, `schemas/remediation_result.json` as `structured_output_schema`, `max_acu_limit: 3`, and `resumable: true`, so the tracker can message the session about its pull request after it has gone idle.
 Before creating a session the dispatcher asks GitHub whether `fix/<package>-sla-<issue_number>` already exists as a branch or an open pull request in `SLA_REPO`; if so the finding counts as already dispatched.
 With `SLA_AUTO_DISPATCH=true` the webhook dispatches every finding it records (result logged as `dispatch=` on the delivery line); by default it only records the finding.
 A failed auto-dispatch (logged as `dispatch=error (<message>)`) keeps the finding row, creates no session, and is not retried automatically; retry it by hand with `bin/dispatch <issue_number>`.
@@ -242,18 +242,20 @@ The tracker (`SLA::Tracker`, `lib/sla/tracker.rb`) is a separate process from th
 Each round records `status`, `status_detail`, `acus_consumed`, the first pull request's URL and state, and the structured output on the `sessions` row, and logs one line when a session's status changes.
 A session is judged `settled` once it has stopped working (status `exit` or `error`, or status detail `waiting_for_user`, `finished`, or `inactivity`) with a structured output or a pull request, and `stalled` once it has stopped with neither; either outcome closes the row and it is never fetched from Devin again.
 Each round also reads the pull request's check runs and merge state from GitHub and records `pr_checks` (`pending`, `failure`, `success`, or `none`), when that state was first observed, and `pr_merged_at`. A closed row keeps having its pull request checked until the pull request is green, merged, or closed, so a finding is judged by whether its fix passed CI, not by whether a session finished.
+When an open pull request's checks are red, the tracker reads the failed check runs from GitHub (name, URL, and the first 40 lines of their summary), renders `prompts/repair_ci.md.erb`, and sends it as a message to the same Devin session that opened the pull request, asking it to fix the failures on the same branch; it does this once per failing head commit (`ci_repair_sha`) and at most `MAX_CI_REPAIRS` (2) times per session (`ci_repairs`), after which the row is logged and left red for a human. No new session is ever created.
 The first time a row has a pull request the notifier comments on the finding's issue (pull request link, session link, due date and whether it is inside or past the SLA window); `pr_notified_at` is written before the comment is posted and cleared if posting fails, so the comment is posted exactly once.
 The comment needs `SLA_GITHUB_TOKEN`; without it the `Null` notifier is used and nothing is posted.
 A structured output that does not match `schemas/remediation_result.json` is kept as JSON text in `structured_output_invalid` with a logged warning naming the first problem; nothing is discarded.
 
 ## Status page
 
-`GET /` (http://localhost:4567/ locally) is a dense, monospaced, terminal-style page that reloads itself every 15 s. One summary line answers the leader's question: findings tracked, findings fixed inside their SLA window, findings that have breached it, and the median time from session start to a green pull request. Below it is one row per finding, sorted by severity and then by due date, with the issue, package and versions, severity, the due date, the SLA word, what the Devin session is doing, and the pull request. A checkbox-and-label toggle next to each row expands a second, CSS-only detail row underneath it with the finding's title, filed time, advisories, source, session status, start time, time to PR, check state, ACUs, and lockfile verification.
+`GET /` (http://localhost:4567/ locally) is a dense, monospaced, terminal-style page that reloads itself every 15 s. One summary line answers the leader's question: findings tracked, findings fixed inside their SLA window, findings that have breached it, and the median time from session start to a green pull request. Below it is one row per finding, sorted by severity and then by due date, with the issue, package and versions, severity, the due date, the SLA word, what the Devin session is doing, and the pull request. A checkbox-and-label toggle next to each row expands a second, CSS-only detail row underneath it with the finding's title, filed time, advisories, source, session status, start time, time to PR, check state, CI repairs sent to the session (when any), ACUs, and lockfile verification.
 `SLA::StatusPage` (`lib/sla/status_page.rb`) reads findings left-joined to sessions and decides everything; `views/status.html.erb` only prints it. A finding is fixed when its pull request is merged or its checks pass. The SLA word is decided in this order:
 
 - `met` — the pull request was merged or its checks passed at or before the due date.
 - `late` — the pull request was merged or its checks passed after the due date.
 - `breached` — the due date has passed without a green pull request.
+- `repairing` — the pull request's checks are red on the commit the tracker last sent back to the session (`ci_repairs` above 0), and the due date has not passed; it reads `[CI FAILING]` again once the checks are observed red on a later commit. The detail row shows `ci repairs: N`.
 - `ci failing` — the pull request's checks are red and the due date has not passed.
 - `in progress` — a session exists (or a pull request is waiting on checks) and the due date has not passed.
 - `stalled` — no pull request, and the session stopped without a report (`outcome` is `stalled`).
@@ -295,6 +297,7 @@ bin/demo-reset && bin/scan
 - 5\. [Detection is a script; remediation is the agent](docs/decisions/0005-deterministic-detection-agentic-remediation.md) — `bin/scan` is plain Ruby around pip-audit and the GitHub Advisory Database, and Devin is only involved once an issue exists.
 - 6\. [We call the sessions API instead of configuring a Devin Automation](docs/decisions/0006-why-not-a-devin-automation.md) — an Automation starts a session when an event fires, but this service owns the finding's lifecycle and its SLA clock, so it calls the same sessions API itself.
 - 7\. [A smee.io channel relays GitHub webhooks to the developer's machine](docs/decisions/0007-smee-relays-webhooks-in-development.md) — the relay is unauthenticated, so the webhook signature check, not the relay, is the security boundary.
+- 8\. [CI failures go back to the session that opened the pull request](docs/decisions/0008-ci-failures-go-back-to-the-session.md) — the tracker sends the failed check runs to the same Devin session once per red commit, capped at two repairs, instead of leaving the red pull request for a human or starting a new session.
 
 ## Development
 

@@ -63,7 +63,7 @@ module SLA
         tags: [TAG, "issue-#{finding[:issue_number]}"],
         structured_output_schema: RemediationPrompt.schema,
         max_acu_limit: @max_acu_limit,
-        resumable: false
+        resumable: true
       }
     end
 

@@ -52,10 +52,24 @@ be `in progress`.
 Proof: test/status_page_test.rb test_in_progress_when_the_pull_requests_checks_are_pending,
 test_a_pull_request_without_observed_checks_yet_is_in_progress_then_breached
 
+**PAGE-07B** IF the finding has a pull request whose checks are `failure`
+at the head sha the tracker last sent back to the session (`ci_repairs`
+above 0 and `ci_repair_sha` equal to `pr_head_sha`) and the due date has
+not passed, THEN the word SHALL be `repairing`, tagged `[REPAIRING]` and
+coloured the same as `in progress`. WHEN the checks are next observed
+`failure` on a later sha (one the tracker has not sent back), the word
+SHALL be `ci failing` again (PAGE-08).
+Proof: test/status_page_test.rb test_repairing_when_checks_are_red_on_the_commit_the_session_was_asked_to_fix,
+test_ci_failing_again_once_the_checks_are_red_on_a_commit_after_the_last_repair,
+test_repairs_do_not_change_the_word_while_checks_are_pending_green_or_past_due;
+test/app_test.rb test_status_page_shows_a_pull_request_the_session_is_repairing
+
 **PAGE-08** IF the finding has a pull request whose checks are `failure`
-and the due date has not passed, THEN the word SHALL be `ci failing`,
-tagged `[CI FAILING]` and coloured the same as `breached`/`late`.
-Proof: test/status_page_test.rb test_ci_failing_when_checks_are_red_inside_the_window
+and the due date has not passed, and PAGE-07B does not apply, THEN the word
+SHALL be `ci failing`, tagged `[CI FAILING]` and coloured the same as
+`breached`/`late`.
+Proof: test/status_page_test.rb test_ci_failing_when_checks_are_red_inside_the_window,
+test_ci_failing_again_once_the_checks_are_red_on_a_commit_after_the_last_repair
 
 **PAGE-09** IF there is no pull request and now is after the due date, THEN
 the word SHALL be `breached`, even when the session stalled; a pull
@@ -174,6 +188,14 @@ observed, THEN the detail row SHALL show the check state and when it (or
 the merge) was observed; IF checks have not been observed, THEN the line
 SHALL be omitted.
 Proof: test/status_page_test.rb test_checks_line_shows_the_check_state_and_when_it_was_observed
+
+**PAGE-29** IF the tracker has sent the session at least one CI repair
+message (`ci_repairs` above 0), THEN the detail row SHALL show
+`ci repairs: N`; IF it has sent none, THEN the line SHALL be omitted.
+Proof: test/status_page_test.rb test_repairing_when_checks_are_red_on_the_commit_the_session_was_asked_to_fix,
+test_ci_failing_when_checks_are_red_inside_the_window;
+test/app_test.rb test_status_page_shows_a_pull_request_the_session_is_repairing,
+test_status_page_lists_the_findings_and_refreshes_itself
 
 ## Unproven
 

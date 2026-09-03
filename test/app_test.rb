@@ -58,6 +58,26 @@ module SLA
       assert_equal 2, body.scan('<dt>title</dt>').size
       assert_equal 2, body.scan('<dt>filed</dt>').size
       assert_equal 1, body.scan('<dt>ACUs</dt>').size
+      refute_includes body, '<dt>ci repairs</dt>'
+    end
+
+    def test_status_page_shows_a_pull_request_the_session_is_repairing
+      finding_id = record_finding(8)
+      DB[:sessions].insert(finding_id: finding_id, devin_session_id: '812ce7c3f89f4e88bce68dc03c9dd462',
+                           status: 'running', status_detail: 'working', started_at: Time.now.utc - 900,
+                           last_polled_at: Time.now.utc, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9',
+                           pr_state: 'open', pr_notified_at: Time.now.utc, pr_checks: 'failure',
+                           pr_checks_at: Time.now.utc, pr_head_sha: 'a1b2c3', ci_repair_sha: 'a1b2c3', ci_repairs: 1,
+                           outcome: 'settled')
+
+      get '/'
+
+      assert_equal 200, last_response.status
+      body = last_response.body
+
+      assert_includes body, 'class="tag sla-repairing">[REPAIRING]</td>'
+      assert_includes body, '.sla-in-progress, .sla-waiting, .sla-repairing { color: var(--warning); }'
+      assert_includes body, '<dt>ci repairs</dt><dd>1</dd>'
     end
 
     def test_house_style_is_served

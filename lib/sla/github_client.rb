@@ -15,6 +15,7 @@ module SLA
     ISSUES_PER_PAGE = 100
     PULLS_PER_PAGE = 100
     CHECK_RUNS_PER_PAGE = 100
+    CHECK_RUN_OUTPUT_LINES = 40
 
     CHECK_RUN_FAILURE_CONCLUSIONS = %w[failure timed_out cancelled action_required].freeze
     CHECK_RUN_SUCCESS_CONCLUSIONS = %w[success neutral skipped].freeze
@@ -31,8 +32,12 @@ module SLA
     # the last run completed for "success" and "failure", and nil otherwise.
     # Only the Checks API is read, so commit statuses posted by CI systems
     # outside GitHub Actions are not seen.
-    PullRequestStatus = Struct.new(:head_sha, :state, :mergeable, :merged, :merged_at, :checks, :checks_at,
-                                   keyword_init: true)
+    PullRequestStatus = Struct.new(:head_sha, :head_branch, :state, :mergeable, :merged, :merged_at, :checks,
+                                   :checks_at, keyword_init: true)
+    # One failed check run: its name, the page GitHub shows for it, and the
+    # first CHECK_RUN_OUTPUT_LINES lines of its output summary (or text when
+    # there is no summary), or nil when the run reported no output.
+    FailedCheckRun = Struct.new(:name, :details_url, :output, keyword_init: true)
 
     # Without a token the client is anonymous, which is enough for the public
     # advisories endpoint but not for reading or filing issues.
@@ -125,9 +130,21 @@ module SLA
       runs = request(:get, "/repos/#{repo}/commits/#{sha}/check-runs",
                      params: { per_page: CHECK_RUNS_PER_PAGE }).fetch('check_runs')
       checks = check_state(runs)
-      PullRequestStatus.new(head_sha: sha, state: pull['state'], mergeable: pull['mergeable'],
-                            merged: pull['merged'], merged_at: parse_time(pull['merged_at']),
+      PullRequestStatus.new(head_sha: sha, head_branch: pull.dig('head', 'ref'), state: pull['state'],
+                            mergeable: pull['mergeable'], merged: pull['merged'],
+                            merged_at: parse_time(pull['merged_at']),
                             checks: checks, checks_at: checks_completed_at(runs, checks))
+    end
+
+    # The check runs on the commit that failed, timed out, were cancelled, or
+    # need action, with enough of each one's output to see what went wrong.
+    # Job logs are not downloaded; the details URL leads to them.
+    def failed_check_runs(repo, sha)
+      runs = request(:get, "/repos/#{repo}/commits/#{sha}/check-runs",
+                     params: { per_page: CHECK_RUNS_PER_PAGE }).fetch('check_runs')
+      runs.select(&method(:failed_run?)).map do |run|
+        FailedCheckRun.new(name: run['name'], details_url: run['details_url'], output: check_run_output(run))
+      end
     end
 
     # Whether the repository has a branch of that name; the ref endpoint answers 404 when it does not.
@@ -189,6 +206,11 @@ module SLA
 
     def passed_run?(run)
       CHECK_RUN_SUCCESS_CONCLUSIONS.include?(run['conclusion'])
+    end
+
+    def check_run_output(run)
+      text = [run.dig('output', 'summary'), run.dig('output', 'text')].find { |value| !value.to_s.strip.empty? }
+      text.lines.first(CHECK_RUN_OUTPUT_LINES).join.chomp if text
     end
 
     # When the last run finished, which is when the combined result was decided.

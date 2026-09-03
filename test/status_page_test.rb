@@ -76,6 +76,55 @@ module SLA
       assert_equal 'ci failing', row.sla
       assert_equal 'sla-ci-failing', row.sla_class
       assert_equal '[CI FAILING]', row.sla_tag
+      assert_equal 0, row.ci_repairs
+      refute_predicate row, :ci_repairs?
+    end
+
+    def test_repairing_when_checks_are_red_on_the_commit_the_session_was_asked_to_fix
+      finding_id = record_finding(1)
+      record_session(finding_id, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9', pr_state: 'open',
+                                 pr_notified_at: DUE - 3600, pr_checks: 'failure', pr_checks_at: NOW,
+                                 pr_head_sha: 'a1b2c3', ci_repair_sha: 'a1b2c3', ci_repairs: 1)
+
+      row = page.rows.fetch(0)
+
+      assert_equal 'repairing', row.sla
+      assert_equal 'sla-repairing', row.sla_class
+      assert_equal '[REPAIRING]', row.sla_tag
+      assert_equal 1, row.ci_repairs
+      assert_predicate row, :ci_repairs?
+      refute_predicate row, :breached?
+    end
+
+    def test_ci_failing_again_once_the_checks_are_red_on_a_commit_after_the_last_repair
+      finding_id = record_finding(1)
+      record_session(finding_id, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9', pr_state: 'open',
+                                 pr_notified_at: DUE - 3600, pr_checks: 'failure', pr_checks_at: NOW,
+                                 pr_head_sha: 'c3d4e5', ci_repair_sha: 'b2c3d4', ci_repairs: 2)
+
+      row = page.rows.fetch(0)
+
+      assert_equal 'ci failing', row.sla
+      assert_equal '[CI FAILING]', row.sla_tag
+      assert_equal 2, row.ci_repairs
+    end
+
+    def test_repairs_do_not_change_the_word_while_checks_are_pending_green_or_past_due
+      finding_id = record_finding(1)
+      record_session(finding_id, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9', pr_state: 'open',
+                                 pr_notified_at: DUE - 3600, pr_checks: 'pending', pr_checks_at: NOW,
+                                 pr_head_sha: 'b2c3d4', ci_repair_sha: 'a1b2c3', ci_repairs: 1)
+
+      assert_equal 'in progress', page.rows.fetch(0).sla
+
+      DB[:sessions].update(pr_checks: 'success', pr_head_sha: 'a1b2c3')
+
+      assert_equal 'met', page.rows.fetch(0).sla
+
+      DB[:sessions].update(pr_checks: 'failure')
+
+      assert_equal 'repairing', page.rows.fetch(0).sla
+      assert_equal 'breached', page(now: DUE + 1).rows.fetch(0).sla
     end
 
     def test_breached_when_checks_are_still_red_past_the_due_date

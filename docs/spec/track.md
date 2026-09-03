@@ -159,6 +159,49 @@ Proof: test/tracker_test.rb test_a_github_error_while_checking_the_pull_request_
 test_a_github_error_during_an_open_poll_still_notifies_and_closes_the_session,
 test_a_pull_request_url_off_github_is_an_error_not_a_crash
 
+## Sending red checks back to the session
+
+**TRACK-28** WHEN a row's pull request is `open` and its checks are
+`failure` at a head sha that differs from the row's `ci_repair_sha`, THE
+tracker SHALL fetch that sha's failed check runs from GitHub (each run's
+name, `details_url`, and the first 40 lines of `output.summary`, or of
+`output.text` when there is no summary; conclusions `failure`, `timed_out`,
+`cancelled`, `action_required`; job logs are not downloaded), render
+`prompts/repair_ci.md.erb` with the pull request URL, branch, sha, and those
+runs, and send it as a message to the Devin session that opened the pull
+request. It SHALL NOT create a new session.
+Proof: test/tracker_test.rb test_red_checks_send_the_failed_runs_to_the_session_once_per_commit,
+test_red_checks_seen_during_an_open_poll_message_the_session_before_it_settles;
+test/github_client_test.rb test_failed_check_runs_keeps_only_the_failure_conclusions_with_name_url_and_summary,
+test_failed_check_runs_falls_back_to_the_output_text_and_keeps_only_the_first_forty_lines,
+test_failed_check_runs_is_empty_when_nothing_failed_or_the_output_is_absent,
+test_pull_request_status_reads_the_head_branch;
+test/repair_prompt_test.rb test_renders_the_flask_example_with_both_escape_import_errors,
+test_lists_a_job_without_output_as_just_its_name_and_url
+
+**TRACK-29** WHEN the message has been sent, THE tracker SHALL record the
+sha as `ci_repair_sha` and increment `ci_repairs`; WHILE `ci_repair_sha`
+equals the observed head sha, THE tracker SHALL NOT send another message,
+however many rounds the checks stay red.
+Proof: test/tracker_test.rb test_red_checks_send_the_failed_runs_to_the_session_once_per_commit
+
+**TRACK-30** WHEN the checks are red at a new head sha and `ci_repairs` is
+below `MAX_CI_REPAIRS` (2), THE tracker SHALL send another message; WHEN
+`ci_repairs` has reached the cap, THE tracker SHALL log once per red sha
+that the pull request is left for a human, send nothing, and leave
+`ci_repair_sha` and `ci_repairs` as they were.
+Proof: test/tracker_test.rb test_a_new_red_commit_gets_a_second_repair_and_the_third_is_left_for_a_human
+
+**TRACK-31** IF sending the message fails, THEN THE tracker SHALL count the
+error, keep the check state it recorded, leave `ci_repair_sha` and
+`ci_repairs` unchanged, and try again on the next round.
+Proof: test/tracker_test.rb test_a_failed_repair_message_is_counted_and_retried_next_round
+
+**TRACK-32** THE tracker SHALL NOT message the session about a pull request
+that is merged or closed, whatever its checks say.
+Proof: test/tracker_test.rb test_a_merged_pull_request_records_the_merge_time_and_state_and_stops_being_watched,
+test_a_pull_request_closed_without_merging_stops_being_watched
+
 ## The polling round
 
 **TRACK-17** WHEN one session's poll fails, THE tracker SHALL log the error,
@@ -201,4 +244,8 @@ command-line entry point has no tests.
   page spec decides what that means.
 - Whether a stored valid structured output is ever replaced by a later one;
   the tracker keeps the first, but no test holds it to that.
-- Resuming, terminating, or archiving sessions; the tracker only reads.
+- Resuming, terminating, or archiving sessions; the tracker's only write to
+  Devin is the repair message of TRACK-28, which relies on the session being
+  `resumable` (DISP-06).
+- The wording of the repair message beyond what TRACK-28 names; the
+  template is the artifact.

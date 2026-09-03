@@ -39,7 +39,9 @@ test_present_issue_details_are_not_fetched
 with the rendered prompt, the issue title as the session title, the target
 repository as its only repository, tags `sla-remediation` and
 `issue-<issue_number>`, the remediation result schema as its structured
-output schema, an ACU limit of 3, and `resumable` false.
+output schema, an ACU limit of 3, and `resumable` true (so the tracker can
+message the session about its pull request after it has gone idle; see
+docs/spec/track.md TRACK-28).
 Proof: test/dispatcher_test.rb test_dispatch_creates_one_session_and_records_it;
 test/devin_client_test.rb test_create_session_posts_the_recorded_request_body
 

@@ -261,6 +261,80 @@ module SLA
       assert_equal Time.utc(2026, 9, 2, 9, 0, 0), status.merged_at
     end
 
+    def test_pull_request_status_reads_the_head_branch
+      stub_request(:get, "#{PULLS_URL}/9")
+        .to_return(status: 200, body: { number: 9, state: 'open', merged: false, merged_at: nil, mergeable: true,
+                                        head: { sha: 'abc123', ref: 'fix/flask-sla-20' } }.to_json,
+                   headers: json_header)
+      stub_request(:get, CHECK_RUNS_URL).with(query: { per_page: '100' })
+                                        .to_return(status: 200, body: { check_runs: [] }.to_json, headers: json_header)
+
+      assert_equal 'fix/flask-sla-20', @client.pull_request_status('kylesnowschwartz/superset', 9).head_branch
+    end
+
+    def stub_check_runs(check_runs)
+      stub_request(:get, CHECK_RUNS_URL).with(query: { per_page: '100' })
+                                        .to_return(status: 200, body: { check_runs: check_runs }.to_json,
+                                                   headers: json_header)
+    end
+
+    def test_failed_check_runs_keeps_only_the_failure_conclusions_with_name_url_and_summary
+      stub_check_runs([{ name: 'unit-tests', status: 'completed', conclusion: 'success',
+                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/1',
+                         output: { summary: 'all green' } },
+                       { name: 'integration-tests', status: 'completed', conclusion: 'failure',
+                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/2',
+                         output: { title: 'Process completed with exit code 1.', summary: "2 tests failed\n",
+                                   text: 'ImportError: cannot import name escape' } },
+                       { name: 'lint', status: 'completed', conclusion: 'timed_out',
+                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/3',
+                         output: { summary: nil, text: nil } },
+                       { name: 'e2e', status: 'in_progress', conclusion: nil,
+                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/4',
+                         output: { summary: 'not done' } },
+                       { name: 'docs', status: 'completed', conclusion: 'skipped',
+                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/5',
+                         output: { summary: nil } }])
+
+      failures = @client.failed_check_runs('kylesnowschwartz/superset', 'abc123')
+
+      assert_requested :get, CHECK_RUNS_URL, query: { per_page: '100' }, headers: HEADERS
+      assert_equal %w[integration-tests lint], failures.map(&:name)
+      assert_equal ['https://github.com/kylesnowschwartz/superset/actions/runs/1/job/2',
+                    'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/3'], failures.map(&:details_url)
+      assert_equal '2 tests failed', failures.fetch(0).output
+      assert_nil failures.fetch(1).output
+    end
+
+    def test_failed_check_runs_falls_back_to_the_output_text_and_keeps_only_the_first_forty_lines
+      text = (1..50).map { |n| "line #{n}" }.join("\n")
+      stub_check_runs([{ name: 'integration-tests', status: 'completed', conclusion: 'cancelled',
+                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/2',
+                         output: { summary: '', text: text } },
+                       { name: 'unit-tests', status: 'completed', conclusion: 'action_required',
+                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/6',
+                         output: { summary: "#{text}\n" } }])
+
+      failures = @client.failed_check_runs('kylesnowschwartz/superset', 'abc123')
+
+      assert_equal (1..40).map { |n| "line #{n}" }.join("\n"), failures.fetch(0).output
+      assert_equal (1..40).map { |n| "line #{n}" }.join("\n"), failures.fetch(1).output
+    end
+
+    def test_failed_check_runs_is_empty_when_nothing_failed_or_the_output_is_absent
+      stub_check_runs([{ name: 'unit-tests', status: 'completed', conclusion: 'success',
+                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/1' }])
+
+      assert_empty @client.failed_check_runs('kylesnowschwartz/superset', 'abc123')
+
+      stub_check_runs([{ name: 'unit-tests', status: 'completed', conclusion: 'failure',
+                         details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/1' }])
+      failures = @client.failed_check_runs('kylesnowschwartz/superset', 'abc123')
+
+      assert_equal ['unit-tests'], failures.map(&:name)
+      assert_nil failures.fetch(0).output
+    end
+
     def test_delete_branch_deletes_the_head_ref
       stub_request(:delete, REFS_URL).to_return(status: 204, body: '')
 

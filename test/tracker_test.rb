@@ -18,7 +18,9 @@ module SLA
     CHANGING_ID = 'aaaa0000000000000000000000000003'
     PR_URL = 'https://github.com/kylesnowschwartz/superset/pull/9'
     GREEN_RUN = { status: 'completed', conclusion: 'success', completed_at: '2026-09-02T08:44:00Z' }.freeze
-    RED_RUN = { status: 'completed', conclusion: 'failure', completed_at: '2026-09-02T08:50:00Z' }.freeze
+    RED_RUN = { status: 'completed', conclusion: 'failure', completed_at: '2026-09-02T08:50:00Z', name: 'test-sqlite',
+                details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/2',
+                output: { summary: "E   ImportError: cannot import name 'escape' from 'flask'" } }.freeze
     PENDING_RUN = { status: 'in_progress', conclusion: nil, completed_at: nil }.freeze
 
     # Records every pr_opened call.
@@ -44,13 +46,24 @@ module SLA
                              notifier: @notifier, github: @github, log: Logger.new(@log_io))
     end
 
-    def stub_pr_status(repo, number, sha:, state: 'open', merged: false, merged_at: nil, check_runs: [])
+    def stub_pr_status(repo, number, sha:, state: 'open', merged: false, merged_at: nil, check_runs: [],
+                       branch: 'fix/urllib3-sla-8')
       stub_request(:get, "https://api.github.com/repos/#{repo}/pulls/#{number}")
         .to_return(status: 200, body: { number: number, state: state, merged: merged, merged_at: merged_at,
-                                        mergeable: true, head: { sha: sha } }.to_json, headers: JSON_HEADER)
+                                        mergeable: true, head: { sha: sha, ref: branch } }.to_json,
+                   headers: JSON_HEADER)
       stub_request(:get, "https://api.github.com/repos/#{repo}/commits/#{sha}/check-runs")
         .with(query: { per_page: '100' })
         .to_return(status: 200, body: { check_runs: check_runs }.to_json, headers: JSON_HEADER)
+    end
+
+    # Stubs the session's messages endpoint and collects every message text
+    # posted to it in @messages, whether or not Devin accepted it.
+    def stub_message(session_id, status: 200)
+      @messages ||= []
+      stub_request(:post, "#{SESSIONS_URL}/#{session_id}/messages")
+        .with { |request| @messages << JSON.parse(request.body).fetch('message') }
+        .to_return(status: status, body: status == 200 ? '{}' : '{"detail":"unavailable"}', headers: JSON_HEADER)
     end
 
     # A closed (settled) row whose pull request is already known, as the watch
@@ -155,12 +168,122 @@ module SLA
       assert_in_delta Time.now.utc, row[:pr_checks_at], 5
 
       stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3', check_runs: [RED_RUN])
+      stub_message(SETTLED_ID)
       @tracker.poll_once
       row = DB[:sessions].first(id: row_id)
 
       assert_equal 'failure', row[:pr_checks]
       assert_equal Time.utc(2026, 9, 2, 8, 50, 0), row[:pr_checks_at]
       assert_match(/INFO.*issue #8: pull request #{PR_URL} checks are red/, @log_io.string)
+    end
+
+    def test_red_checks_send_the_failed_runs_to_the_session_once_per_commit
+      row_id = record_settled_pr_session(8, pr_checks: 'pending', pr_checks_at: Time.now.utc - 60)
+      stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3', check_runs: [GREEN_RUN, RED_RUN])
+      stub_message(SETTLED_ID)
+
+      assert_equal({ polled: 0, settled: 0, stalled: 0, notified: 0, errors: 0 }, @tracker.poll_once)
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal 'failure', row[:pr_checks]
+      assert_equal 'a1b2c3', row[:pr_head_sha]
+      assert_equal 'a1b2c3', row[:ci_repair_sha]
+      assert_equal 1, row[:ci_repairs]
+      message = @messages.fetch(0)
+
+      assert_includes message, "pull request #{PR_URL} (branch `fix/urllib3-sla-8`)\nare failing at commit a1b2c3."
+      assert_includes message, "- `test-sqlite` — #{RED_RUN[:details_url]}\n\n  ```\n  " \
+                               "E   ImportError: cannot import name 'escape' from 'flask'\n  ```"
+      refute_includes message, 'success'
+      assert_includes message, 'Work on the same branch, `fix/urllib3-sla-8`'
+      assert_match "INFO -- : tracker issue #8: asked session #{SETTLED_ID} to repair 1 failed check run(s) " \
+                   'at a1b2c3 (repair 1 of 2)', @log_io.string
+
+      @tracker.poll_once
+      @tracker.poll_once
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal 1, @messages.size
+      assert_equal 1, row[:ci_repairs]
+      assert_requested :get, %r{api\.github\.com/repos/kylesnowschwartz/superset/commits/a1b2c3/check-runs}, times: 4
+      refute_match(/WARN|ERROR/, @log_io.string)
+    end
+
+    def test_a_new_red_commit_gets_a_second_repair_and_the_third_is_left_for_a_human
+      row_id = record_settled_pr_session(8, pr_checks: 'failure', pr_checks_at: Time.now.utc - 60,
+                                            pr_head_sha: 'a1b2c3', ci_repair_sha: 'a1b2c3', ci_repairs: 1)
+      stub_message(SETTLED_ID)
+      stub_pr_status('kylesnowschwartz/superset', 9, sha: 'b2c3d4', check_runs: [PENDING_RUN])
+
+      @tracker.poll_once
+
+      assert_equal 'pending', DB[:sessions].first(id: row_id)[:pr_checks]
+      assert_empty @messages
+
+      stub_pr_status('kylesnowschwartz/superset', 9, sha: 'b2c3d4', check_runs: [RED_RUN])
+      @tracker.poll_once
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal 'b2c3d4', row[:ci_repair_sha]
+      assert_equal 2, row[:ci_repairs]
+      assert_includes @messages.fetch(0), 'are failing at commit b2c3d4.'
+      assert_match(/repair 2 of 2/, @log_io.string)
+
+      stub_pr_status('kylesnowschwartz/superset', 9, sha: 'c3d4e5', check_runs: [RED_RUN])
+      @tracker.poll_once
+      @tracker.poll_once
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal 1, @messages.size
+      assert_equal 'failure', row[:pr_checks]
+      assert_equal 'c3d4e5', row[:pr_head_sha]
+      assert_equal 'b2c3d4', row[:ci_repair_sha]
+      assert_equal 2, row[:ci_repairs]
+      warnings = @log_io.string.scan("WARN -- : tracker issue #8: pull request #{PR_URL} checks are red at c3d4e5 " \
+                                     'after 2 repairs; leaving it for a human')
+
+      assert_equal 1, warnings.size
+    end
+
+    def test_a_failed_repair_message_is_counted_and_retried_next_round
+      row_id = record_settled_pr_session(8, pr_checks: 'pending', pr_checks_at: Time.now.utc - 60)
+      stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3', check_runs: [RED_RUN])
+      stub_message(SETTLED_ID, status: 503)
+
+      summary = @tracker.poll_once
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal({ polled: 0, settled: 0, stalled: 0, notified: 0, errors: 1 }, summary)
+      assert_equal 'failure', row[:pr_checks]
+      assert_nil row[:ci_repair_sha]
+      assert_equal 0, row[:ci_repairs]
+      assert_match(/ERROR.*session #{SETTLED_ID}: SLA::DevinAPIError: Devin API returned 503/, @log_io.string)
+
+      stub_message(SETTLED_ID)
+      summary = @tracker.poll_once
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal 0, summary[:errors]
+      assert_equal 'a1b2c3', row[:ci_repair_sha]
+      assert_equal 1, row[:ci_repairs]
+      assert_equal 2, @messages.size
+    end
+
+    def test_red_checks_seen_during_an_open_poll_message_the_session_before_it_settles
+      row_id = record_session(8, SETTLED_ID)
+      stub_session(SETTLED_ID, fixture('get_session_settled_with_pr_and_output.json'))
+      stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3', check_runs: [RED_RUN])
+      stub_message(SETTLED_ID)
+
+      summary = @tracker.poll_once
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal({ polled: 1, settled: 1, stalled: 0, notified: 1, errors: 0 }, summary)
+      assert_equal 'settled', row[:outcome]
+      assert_equal 'a1b2c3', row[:ci_repair_sha]
+      assert_equal 1, row[:ci_repairs]
+      assert_equal 1, @messages.size
+      assert_equal 1, @notifier.calls.size
     end
 
     def test_a_merged_pull_request_records_the_merge_time_and_state_and_stops_being_watched
@@ -174,10 +297,12 @@ module SLA
       assert_equal 'merged', row[:pr_state]
       assert_equal Time.utc(2026, 9, 2, 9, 0, 0), row[:pr_merged_at]
       assert_equal 'failure', row[:pr_checks]
+      assert_equal 0, row[:ci_repairs]
 
       @tracker.poll_once
 
       assert_requested :get, %r{api\.github\.com/repos/kylesnowschwartz/superset/pulls/9}, times: 1
+      assert_not_requested :post, /api\.devin\.ai/
     end
 
     def test_a_pull_request_closed_without_merging_stops_being_watched

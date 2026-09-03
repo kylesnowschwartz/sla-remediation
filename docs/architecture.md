@@ -63,8 +63,10 @@ flowchart LR
    Uniqueness on issue number makes duplicate deliveries a no-op.
 4. **Service → Devin.** The dispatcher renders the prompt template with the
    finding, then `POST /v3/organizations/{org}/sessions` with `prompt`,
-   `repos`, `tags`, `title`, `resumable: false`, `max_acu_limit`,
+   `repos`, `tags`, `title`, `resumable: true`, `max_acu_limit`,
    `structured_output_schema`. It stores `session_id`, `url`, `status`.
+   Resumable, so the tracker can send the session a message after it has
+   gone idle (step 7b).
 5. **Devin → GitHub.** The session bumps the pin, verifies with pip-audit,
    opens a PR on the fork referencing the issue, and records its structured
    output.
@@ -74,6 +76,16 @@ flowchart LR
    boundary). Terminal: `exit`/`error`; `suspended`+`inactivity` = stalled.
 7. **Service → GitHub.** On first PR detection the Notifier comments on the
    issue with the PR link and session summary. (Phase 2: also Slack.)
+7b. **Service ← GitHub → Devin.** Every round the tracker reads the PR's
+   check runs. When the checks are red on an open PR at a head sha it has not
+   yet sent back, it fetches the failed check runs (`name`, `details_url`,
+   first 40 lines of `output.summary`/`output.text`), renders
+   `prompts/repair_ci.md.erb`, and `POST`s it as a message to the same
+   session; then it writes `ci_repair_sha` and increments `ci_repairs`. The
+   session pushes to the same branch, CI reruns, and step 7b judges the new
+   sha. Capped at `Tracker::MAX_CI_REPAIRS` (2) per session; past the cap the
+   tracker logs once per red sha and leaves the PR for a human. No new
+   session is created (ADR 0008).
 8. **DB → humans.** The status page lists findings with SLA due, session
    state, PR link, ACUs consumed, time-to-PR.
 
@@ -85,5 +97,7 @@ flowchart LR
   `SlackNotifier` in Phase 2.
 - `Finding` owns SLA math and finding-block parsing; nothing else parses
   issue bodies.
-- The prompt template and the structured-output schema live as files
+- The prompt templates and the structured-output schema live as files
   (`prompts/`, `schemas/`) — reviewable artifacts, not string literals.
+  `RemediationPrompt` renders the dispatch prompt and `RepairPrompt` the
+  CI-repair message; the tracker does not compose message text itself.

@@ -16,8 +16,8 @@ module SLA
     NONE = '—'
     NOT_YET = 'not yet'
     SESSION_COLUMNS = %i[devin_session_id status status_detail acus_consumed pr_url pr_state outcome started_at
-                         pr_notified_at pr_checks pr_checks_at pr_merged_at structured_output
-                         structured_output_invalid].freeze
+                         pr_notified_at pr_checks pr_checks_at pr_merged_at pr_head_sha ci_repair_sha ci_repairs
+                         structured_output structured_output_invalid].freeze
 
     Summary = Struct.new(:findings, :fixed_inside_sla, :breached, :median_time_to_green,
                          keyword_init: true)
@@ -127,6 +127,22 @@ module SLA
         StatusPage.time(record[:pr_merged_at] || record[:pr_checks_at])
       end
 
+      # How many times the tracker has sent red checks back to the session.
+      def ci_repairs
+        record[:ci_repairs].to_i
+      end
+
+      def ci_repairs?
+        ci_repairs.positive?
+      end
+
+      # The checks are red on the very commit the session was last asked to
+      # repair, so the session is presumed to be working on it; once the
+      # checks are observed on a later commit this is false again.
+      def repairing?
+        record[:pr_checks] == 'failure' && ci_repairs? && record[:ci_repair_sha] == record[:pr_head_sha]
+      end
+
       # When the pull request turned green: its merge time, else the time its
       # checks last completed while they are passing (a later push that goes
       # green again moves this forward), or nil while it has not.
@@ -203,11 +219,14 @@ module SLA
 
       # met/late once the pull request is merged or its checks are green,
       # judged by when that happened against the due date; otherwise breached
-      # once the due date has passed, ci failing while checks are red inside
-      # the window, and in progress while checks are pending or unobserved.
+      # once the due date has passed, repairing while checks are red inside
+      # the window on a commit the session has been asked to fix, ci failing
+      # while they are red otherwise, and in progress while checks are
+      # pending or unobserved.
       def pr_sla_word(due_at)
         return (green_at <= due_at ? 'met' : 'late') if green_at
         return 'breached' if now > due_at
+        return 'repairing' if repairing?
         return 'ci failing' if record[:pr_checks] == 'failure'
 
         'in progress'
