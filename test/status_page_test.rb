@@ -233,6 +233,15 @@ module SLA
       assert_equal 'kylesnowschwartz/superset', page.repo
     end
 
+    def test_repo_falls_back_to_the_findings_issue_urls_when_none_is_given
+      assert_nil StatusPage.new(DB, now: NOW).repo
+
+      record_finding(8)
+
+      assert_equal 'kylesnowschwartz/superset', StatusPage.new(DB, now: NOW).repo
+      assert_equal 'other/fork', StatusPage.new(DB, repo: 'other/fork', now: NOW).repo
+    end
+
     def test_fix_version_is_shown_when_present
       record_finding(1)
 

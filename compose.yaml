@@ -7,6 +7,7 @@ services:
       - "4567:4567"
     volumes:
       - sla-db:/app/data
+      - ./db/fixtures:/app/db/fixtures
     env_file:
       - path: .env
         required: false

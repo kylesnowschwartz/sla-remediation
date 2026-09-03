@@ -214,7 +214,9 @@ module SLA
       end
     end
 
-    attr_reader :repo, :now
+    ISSUE_URL_REPO = %r{\Ahttps://github\.com/([^/]+/[^/]+)/issues/\d+\z}
+
+    attr_reader :now
 
     # `2m 30s` under an hour, `3h 12m` under a day, `2d 4h` from a day up.
     def self.duration(seconds)
@@ -239,6 +241,13 @@ module SLA
       @db = db
       @repo = repo
       @now = now
+    end
+
+    # The repository given at construction, else the one the findings' issue
+    # URLs point at, so a page filled from a fixture names its fork without
+    # SLA_REPO being set.
+    def repo
+      @repo ||= records.filter_map { |record| record[:issue_url].to_s[ISSUE_URL_REPO, 1] }.first
     end
 
     def rendered_at
@@ -274,11 +283,11 @@ module SLA
     end
 
     def records
-      @db[:findings]
-        .left_join(:sessions, finding_id: :id)
-        .select_all(:findings)
-        .select_append(Sequel[:sessions][:id].as(:session_row_id), *SESSION_COLUMNS)
-        .all
+      @records ||= @db[:findings]
+                   .left_join(:sessions, finding_id: :id)
+                   .select_all(:findings)
+                   .select_append(Sequel[:sessions][:id].as(:session_row_id), *SESSION_COLUMNS)
+                   .all
     end
 
     def sorted(records)

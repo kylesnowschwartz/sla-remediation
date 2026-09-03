@@ -19,6 +19,7 @@ One per slice, in data-flow order:
 | [track.md](track.md) | poll sessions, record results, follow the pull request, comment on the issue |
 | [status-page.md](status-page.md) | counts, the SLA word per finding, what each cell shows |
 | [demo-reset.md](demo-reset.md) | return the target repo and database to their pre-run state |
+| [demo-fixture.md](demo-fixture.md) | capture a run's findings and sessions to a file; load them back, shifted to the present |
 
 ## Reading a file
 

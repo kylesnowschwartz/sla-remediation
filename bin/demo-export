@@ -1,0 +1,40 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Writes every row of the findings and sessions tables to a JSON fixture that
+# bin/demo-load can put back into an empty database, so the status page can be
+# shown without any credentials. Timestamps are ISO 8601 UTC strings. Nothing
+# in either table is secret.
+#
+#   bin/demo-export                    # write db/fixtures/demo.json
+#   bin/demo-export --output FILE      # write somewhere else
+#
+# Needs no environment variables beyond SLA_DATABASE_URL when the database is
+# not at its default path. Exits 1 without writing when both tables are empty,
+# so a fresh database never overwrites a captured fixture.
+
+require 'bundler/setup'
+require 'fileutils'
+require 'json'
+require 'optparse'
+
+require_relative '../lib/sla/db'
+require_relative '../lib/sla/demo_fixture'
+
+DEFAULT_PATH = File.expand_path('../db/fixtures/demo.json', __dir__)
+
+path = DEFAULT_PATH
+OptionParser.new do |opts|
+  opts.banner = 'Usage: bin/demo-export [--output FILE]'
+  opts.on('--output FILE', "Where to write the fixture (default #{DEFAULT_PATH})") { |file| path = file }
+end.parse!
+
+begin
+  fixture = SLA::DemoFixture.new(SLA::DB).export
+rescue SLA::DemoFixture::DatabaseEmpty => e
+  warn "#{e.message} (database #{SLA::DB.url})"
+  exit 1
+end
+FileUtils.mkdir_p(File.dirname(path))
+File.write(path, "#{JSON.pretty_generate(fixture)}\n")
+puts "wrote #{path}"
