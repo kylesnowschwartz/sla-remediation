@@ -1,204 +1,94 @@
 # Track
 
-Devin sessions never report back on their own, so the tracker asks. It polls
-every open session, records what it sees, decides when a session is finished
-and whether it delivered, and tells the issue about the pull request once.
-It then follows the pull request on GitHub until it is merged, closed, or
-green, so the status page can judge a finding fixed by the pull request
-passing rather than by the session ending.
+The tracker polls open Devin sessions, records what it sees, announces the pull request once, then follows that pull request on GitHub until it is merged, closed, or green.
 
-## What is polled
+## What is polled and recorded
 
-**TRACK-01** THE tracker SHALL poll every sessions row that has a Devin
-session id and no outcome, in the order the rows were created.
-Proof: test/tracker_test.rb test_working_session_stays_open,
-test_rows_without_a_devin_session_id_are_skipped
-
-**TRACK-02** WHEN a row has an outcome, THE tracker SHALL never fetch its
-session again (its pull request may still be followed; see TRACK-22).
-Proof: test/tracker_test.rb test_settled_session_with_pull_request_and_output_is_recorded_and_notified_once,
-test_suspended_session_without_report_or_pull_request_is_stalled,
-test_a_settled_row_with_pending_checks_is_watched_until_they_pass
-
-## What is recorded
-
-**TRACK-03** WHEN a session is fetched, THE tracker SHALL record its status,
-status detail, ACUs consumed, and the poll time, and the URL and state of
-its first pull request when it has one.
-Proof: test/tracker_test.rb test_settled_session_with_pull_request_and_output_is_recorded_and_notified_once,
-test_working_session_stays_open
-
-**TRACK-04** WHEN a session carries structured output that matches the
-remediation result schema, THE tracker SHALL store it as JSON text in
-`structured_output`.
-Proof: test/tracker_test.rb test_settled_session_with_pull_request_and_output_is_recorded_and_notified_once
-
-**TRACK-05** IF the structured output does not match the schema, THEN THE
-tracker SHALL store it as JSON text in `structured_output_invalid`, log a
-warning naming the first problem, and discard nothing.
-Proof: test/tracker_test.rb test_output_of_another_shape_is_kept_as_invalid_with_a_warning
-
-**TRACK-06** THE tracker SHALL read the API's structured output as an
-object, or as a JSON string to be parsed, and treat the string `"null"` or
-an absent value as no output.
-Proof: test/devin_client_test.rb test_structured_output_object_stays_a_hash,
-test_structured_output_json_string_is_parsed, test_structured_output_string_null_becomes_nil
-
-**TRACK-07** WHEN a session's status or status detail differs from the last
-recorded value, THE tracker SHALL log the change once, naming the issue and
-session.
-Proof: test/tracker_test.rb test_a_status_change_is_logged_once
+- **TRACK-01** Polls every sessions row with a Devin session id and no outcome, oldest row first.
+- **TRACK-02** Outcome set → session never fetched again; its pull request may still be followed (TRACK-22).
+- **TRACK-03** On fetch, records status, status detail, ACUs, poll time, and its first pull request's URL and state.
+- **TRACK-04** Output matching the remediation result schema is stored as JSON in `structured_output`.
+- **TRACK-05** Off-schema output → JSON in `structured_output_invalid`, warning names the first problem, nothing lost.
+- **TRACK-06** Reads the API's output as an object or as a JSON string; `"null"` or absent means no output.
+- **TRACK-07** A change of status or status detail is logged once, naming the issue and session.
 
 ## Deciding the outcome
 
-**TRACK-08** THE tracker SHALL judge a session stopped when its status is
-`exit` or `error`, or its status detail is `waiting_for_user`, `finished`,
-or `inactivity`; a running session with no such detail is not stopped.
-Proof: test/devin_client_test.rb test_running_session_is_not_stopped,
-test_waiting_for_user_with_output_is_settled, test_suspended_with_pr_is_stopped_and_reported
-
-**TRACK-09** THE tracker SHALL judge a session reported when it has
-structured output or at least one pull request.
-Proof: test/devin_client_test.rb test_waiting_for_user_with_output_is_settled,
-test_suspended_with_pr_is_stopped_and_reported
-
-**TRACK-10** WHEN a session is stopped and reported, THE tracker SHALL set
-the row's outcome to `settled` and its finish time to the session's last
-update time.
-Proof: test/tracker_test.rb test_settled_session_with_pull_request_and_output_is_recorded_and_notified_once,
-test_suspended_session_with_pull_request_is_settled_and_notified_once,
-test_output_of_another_shape_is_kept_as_invalid_with_a_warning
-
-**TRACK-11** WHEN a session is stopped but not reported, THE tracker SHALL set
-the outcome to `stalled` and log a warning naming the issue, session, and
-status.
-Proof: test/tracker_test.rb test_suspended_session_without_report_or_pull_request_is_stalled;
-test/devin_client_test.rb test_stopped_without_output_or_pr_is_stalled
-
-**TRACK-12** WHILE a session is not stopped, THE tracker SHALL leave the row
-open with no outcome and no finish time.
-Proof: test/tracker_test.rb test_working_session_stays_open
+- **TRACK-08** *Stopped*: status `exit`/`error`, or detail `waiting_for_user`/`finished`/`inactivity`.
+- **TRACK-09** A session is *reported* when it has structured output or a pull request.
+- **TRACK-10** Stopped and reported → outcome `settled`, finished at the session's last update time.
+- **TRACK-11** Stopped but not reported → outcome `stalled`; warning logged naming issue, session, status.
+- **TRACK-12** While not stopped, the row stays open: no outcome, no finish time.
 
 ## Telling the issue
 
-**TRACK-13** WHEN a row first gains a pull request URL, THE tracker SHALL
-record the time in `pr_notified_at` and then ask the notifier to announce
-the pull request, once.
-Proof: test/tracker_test.rb test_settled_session_with_pull_request_and_output_is_recorded_and_notified_once,
-test_suspended_session_with_pull_request_is_settled_and_notified_once,
-test_a_failed_notification_clears_the_timestamp_and_leaves_the_row_open
-
-**TRACK-14** IF the announcement fails, THEN THE tracker SHALL clear
-`pr_notified_at`, leave the row open, log the error, and count it as an
-error, so the next poll tries again.
-Proof: test/tracker_test.rb test_a_failed_notification_clears_the_timestamp_and_leaves_the_row_open
-
-**TRACK-15** THE issue-comment notifier SHALL post one comment on the
-finding's issue giving the pull request URL, the Devin session URL, the due
-date as `YYYY-MM-DD HH:MM UTC`, and whether now is inside or past the SLA
-window.
-Proof: test/notifier_test.rb test_issue_comment_posts_the_links_and_inside_the_window,
-test_issue_comment_says_past_the_window_after_the_due_date
-
-**TRACK-16** WHILE `SLA_GITHUB_TOKEN` is unset, THE tracker SHALL use a
-notifier that posts nothing and SHALL not ask GitHub about pull requests at
-all, so that it never polls anonymously.
-Proof: test/notifier_test.rb test_null_posts_nothing;
-test/tracker_test.rb test_without_a_github_client_pull_requests_are_never_looked_at
-(the wiring in `bin/track` is unproven)
+- **TRACK-13** A row's first pull request URL → stamp `pr_notified_at`, then announce the pull request, once.
+- **TRACK-14** Failed announcement → clear `pr_notified_at`, row stays open, error counted, retried next poll.
+- **TRACK-15** Notifier comments once: pull request and session URLs, due `YYYY-MM-DD HH:MM UTC`, inside or past SLA.
+- **TRACK-16** Without `SLA_GITHUB_TOKEN`: notifier posts nothing, GitHub never asked about pull requests.
 
 ## Following the pull request
 
-**TRACK-22** THE tracker SHALL ask GitHub about a row's pull request on
-every poll of an open session that has one, and on every round for a
-closed row whose pull request is not yet merged or closed and whose checks
-are not yet `success` (unobserved, `none`, `pending`, or `failure`). Rows
-whose pull request is merged, closed, or green SHALL not be asked about
-again.
-Proof: test/tracker_test.rb test_a_settled_row_with_pending_checks_is_watched_until_they_pass,
-test_a_settled_row_without_check_runs_yet_is_watched_until_they_appear,
-test_a_merged_pull_request_records_the_merge_time_and_state_and_stops_being_watched,
-test_a_pull_request_closed_without_merging_stops_being_watched
+- **TRACK-22** Asks GitHub about the PR every poll while open, then every round until merged, closed, or green.
+- **TRACK-23** GitHub's answer wins: state `merged`/`closed`/`open`, merge time once, check state —
+  - `success`: every completed run passed, was neutral, or was skipped
+  - `failure`: any run failed
+  - `pending`: any run unfinished
+  - `none`: no runs
+- **TRACK-24** Times are GitHub's own, not when the tracker noticed:
+  - merge `merged_at`; completed checks, the latest `completed_at` among the runs
+  - checks `pending` or `none`: the time the tracker saw them
+- **TRACK-25** While the check state is unchanged, the check time is left alone.
+- **TRACK-26** Checks turning `failure` from any other state → logged once, naming issue and pull request.
+- **TRACK-27** A GitHub failure, or a pull request URL off GitHub, is logged and counted:
+  - the row's pull request columns stay as they were
+  - the same poll still announces the pull request and decides the outcome
 
-**TRACK-23** WHEN GitHub answers, THE tracker SHALL record the pull
-request's state as `merged`, `closed`, or `open` from GitHub (replacing what
-the session reported), the aggregate check state (`success` when every
-completed run passed, was neutral, or was skipped; `failure` when any run
-failed; `pending` while any run is unfinished; `none` when there are no
-runs), and the merge time once.
-Proof: test/tracker_test.rb test_a_merged_pull_request_records_the_merge_time_and_state_and_stops_being_watched,
-test_a_pull_request_closed_without_merging_stops_being_watched;
-test/github_client_test.rb test_pull_request_status_is_success_when_every_run_completed_and_passed,
-test_pull_request_status_is_failure_when_a_completed_run_failed,
-test_pull_request_status_is_pending_without_a_time_when_a_run_has_not_completed,
-test_pull_request_status_is_none_when_there_are_no_check_runs_and_reads_the_merge
+## The polling round and command
 
-**TRACK-24** THE times recorded for a merge and for completed checks SHALL
-be GitHub's own (`merged_at`, and the latest `completed_at` among the check
-runs), not the time the tracker noticed them, so an outage does not turn a
-timely fix late. WHILE checks are `pending` or `none`, the check time SHALL
-be when the tracker saw them.
-Proof: test/tracker_test.rb test_settled_session_with_pull_request_and_output_is_recorded_and_notified_once,
-test_a_settled_row_without_check_runs_yet_is_watched_until_they_appear,
-test_a_merged_pull_request_records_the_merge_time_and_state_and_stops_being_watched;
-test/github_client_test.rb test_pull_request_status_is_success_when_every_run_completed_and_passed
-
-**TRACK-25** WHILE the check state is unchanged, THE tracker SHALL leave the
-check time alone.
-Proof: test/tracker_test.rb test_pr_checks_at_is_unchanged_when_checks_are_still_success
-
-**TRACK-26** WHEN the checks turn `failure` from any other state, THE
-tracker SHALL log it once, naming the issue and pull request.
-Proof: test/tracker_test.rb test_a_settled_row_without_check_runs_yet_is_watched_until_they_appear
-
-**TRACK-27** IF asking GitHub fails, or the pull request URL is not a GitHub
-pull request, THEN THE tracker SHALL log the error, count it, leave the
-row's pull request columns as they were, and still announce the pull
-request and decide the session's outcome in the same poll.
-Proof: test/tracker_test.rb test_a_github_error_while_checking_the_pull_request_is_counted_and_leaves_the_row_alone,
-test_a_github_error_during_an_open_poll_still_notifies_and_closes_the_session,
-test_a_pull_request_url_off_github_is_an_error_not_a_crash
-
-## The polling round
-
-**TRACK-17** WHEN one session's poll fails, THE tracker SHALL log the error,
-count it, and continue with the remaining sessions in the same round.
-Proof: test/tracker_test.rb test_an_error_for_one_session_does_not_stop_the_others
-
-**TRACK-18** EACH round SHALL yield a summary counting sessions polled,
-settled, stalled, notified, and errors (from session polls and pull
-request checks alike).
-Proof: test/tracker_test.rb test_an_error_for_one_session_does_not_stop_the_others,
-test_a_github_error_while_checking_the_pull_request_is_counted_and_leaves_the_row_alone
-
-**TRACK-19** WHEN run as a loop, THE tracker SHALL poll, report the round,
-sleep the interval, and repeat until stopped.
-Proof: test/tracker_test.rb test_run_polls_and_yields_each_summary_between_sleeps
-
-## Command
-
-**TRACK-20** `bin/track` SHALL run one round and print the summary as
-`polled= settled= stalled= notified= errors=`; `bin/track --loop` SHALL
-repeat every 15 seconds until interrupted.
-Proof: unproven
-
-**TRACK-21** IF `DEVIN_SERVICE_API_KEY_V3` or `DEVIN_ORG_ID` is unset, THEN
-`bin/track` SHALL name the missing variables and exit 1 without polling.
-Proof: unproven
-
-## Unproven
-
-TRACK-20, TRACK-21, and the notifier and GitHub wiring in TRACK-16. The
-command-line entry point has no tests.
+- **TRACK-17** A failed session poll is logged and counted; the round continues with the remaining sessions.
+- **TRACK-18** Each round summarises polled, settled, stalled, notified, and errors from polls and PR checks.
+- **TRACK-19** Run as a loop: poll, report the round, sleep the interval, repeat until stopped.
+- **TRACK-20** `bin/track` runs one round; `bin/track --loop` repeats every 15 seconds until interrupted.
+  - Summary line: `polled= settled= stalled= notified= errors=`
+- **TRACK-21** Missing `DEVIN_SERVICE_API_KEY_V3` or `DEVIN_ORG_ID` → names them, exits 1 without polling.
 
 ## Not specified
 
 - The wording of log lines.
-- Legacy commit statuses; only the Checks API is read, and only the first
-  100 check runs on the head commit.
-- Whether a pull request that turns green, then red again, is judged by
-  its earlier green; the tracker records the latest state, and the status
-  page spec decides what that means.
-- Whether a stored valid structured output is ever replaced by a later one;
-  the tracker keeps the first, but no test holds it to that.
+- Legacy commit statuses; only the Checks API, only the first 100 runs on the head commit.
+- Green-then-red pull requests: the tracker records the latest state, the status page spec rules.
+- Whether a stored valid structured output is ever replaced; the first is kept, but untested.
 - Resuming, terminating, or archiving sessions; the tracker only reads.
+
+<details><summary>Proofs</summary>
+
+- TRACK-01: `test/tracker_test.rb` test_working_session_stays_open, test_rows_without_a_devin_session_id_are_skipped
+- TRACK-02: `test/tracker_test.rb` test_settled_session_with_pull_request_and_output_is_recorded_and_notified_once, test_suspended_session_without_report_or_pull_request_is_stalled, test_a_settled_row_with_pending_checks_is_watched_until_they_pass
+- TRACK-03: `test/tracker_test.rb` test_settled_session_with_pull_request_and_output_is_recorded_and_notified_once, test_working_session_stays_open
+- TRACK-04: `test/tracker_test.rb` test_settled_session_with_pull_request_and_output_is_recorded_and_notified_once
+- TRACK-05: `test/tracker_test.rb` test_output_of_another_shape_is_kept_as_invalid_with_a_warning
+- TRACK-06: `test/devin_client_test.rb` test_structured_output_object_stays_a_hash, test_structured_output_json_string_is_parsed, test_structured_output_string_null_becomes_nil
+- TRACK-07: `test/tracker_test.rb` test_a_status_change_is_logged_once
+- TRACK-08: `test/devin_client_test.rb` test_running_session_is_not_stopped, test_waiting_for_user_with_output_is_settled, test_suspended_with_pr_is_stopped_and_reported
+- TRACK-09: `test/devin_client_test.rb` test_waiting_for_user_with_output_is_settled, test_suspended_with_pr_is_stopped_and_reported
+- TRACK-10: `test/tracker_test.rb` test_settled_session_with_pull_request_and_output_is_recorded_and_notified_once, test_suspended_session_with_pull_request_is_settled_and_notified_once, test_output_of_another_shape_is_kept_as_invalid_with_a_warning
+- TRACK-11: `test/tracker_test.rb` test_suspended_session_without_report_or_pull_request_is_stalled; `test/devin_client_test.rb` test_stopped_without_output_or_pr_is_stalled
+- TRACK-12: `test/tracker_test.rb` test_working_session_stays_open
+- TRACK-13: `test/tracker_test.rb` test_settled_session_with_pull_request_and_output_is_recorded_and_notified_once, test_suspended_session_with_pull_request_is_settled_and_notified_once, test_a_failed_notification_clears_the_timestamp_and_leaves_the_row_open
+- TRACK-14: `test/tracker_test.rb` test_a_failed_notification_clears_the_timestamp_and_leaves_the_row_open
+- TRACK-15: `test/notifier_test.rb` test_issue_comment_posts_the_links_and_inside_the_window, test_issue_comment_says_past_the_window_after_the_due_date
+- TRACK-16: `test/notifier_test.rb` test_null_posts_nothing; `test/tracker_test.rb` test_without_a_github_client_pull_requests_are_never_looked_at (the wiring in `bin/track` is unproven)
+- TRACK-17: `test/tracker_test.rb` test_an_error_for_one_session_does_not_stop_the_others
+- TRACK-18: `test/tracker_test.rb` test_an_error_for_one_session_does_not_stop_the_others, test_a_github_error_while_checking_the_pull_request_is_counted_and_leaves_the_row_alone
+- TRACK-19: `test/tracker_test.rb` test_run_polls_and_yields_each_summary_between_sleeps
+- TRACK-20: unproven
+- TRACK-21: unproven
+- TRACK-22: `test/tracker_test.rb` test_a_settled_row_with_pending_checks_is_watched_until_they_pass, test_a_settled_row_without_check_runs_yet_is_watched_until_they_appear, test_a_merged_pull_request_records_the_merge_time_and_state_and_stops_being_watched, test_a_pull_request_closed_without_merging_stops_being_watched
+- TRACK-23: `test/tracker_test.rb` test_a_merged_pull_request_records_the_merge_time_and_state_and_stops_being_watched, test_a_pull_request_closed_without_merging_stops_being_watched; `test/github_client_test.rb` test_pull_request_status_is_success_when_every_run_completed_and_passed, test_pull_request_status_is_failure_when_a_completed_run_failed, test_pull_request_status_is_pending_without_a_time_when_a_run_has_not_completed, test_pull_request_status_is_none_when_there_are_no_check_runs_and_reads_the_merge
+- TRACK-24: `test/tracker_test.rb` test_settled_session_with_pull_request_and_output_is_recorded_and_notified_once, test_a_settled_row_without_check_runs_yet_is_watched_until_they_appear, test_a_merged_pull_request_records_the_merge_time_and_state_and_stops_being_watched; `test/github_client_test.rb` test_pull_request_status_is_success_when_every_run_completed_and_passed
+- TRACK-25: `test/tracker_test.rb` test_pr_checks_at_is_unchanged_when_checks_are_still_success
+- TRACK-26: `test/tracker_test.rb` test_a_settled_row_without_check_runs_yet_is_watched_until_they_appear
+- TRACK-27: `test/tracker_test.rb` test_a_github_error_while_checking_the_pull_request_is_counted_and_leaves_the_row_alone, test_a_github_error_during_an_open_poll_still_notifies_and_closes_the_session, test_a_pull_request_url_off_github_is_an_error_not_a_crash
+
+</details>
