@@ -18,6 +18,17 @@
       }
     },
     "pr_url": { "type": "string" },
-    "notes": { "type": "string" }
+    "notes": { "type": "string" },
+    "breaking_changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "tests_run": { "type": "array", "items": { "type": "string" } }
   }
 }

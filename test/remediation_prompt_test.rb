@@ -28,6 +28,50 @@ module SLA
       'notes' => 'Recompiling moved unrelated pins, so the urllib3 line was edited directly.'
     }.freeze
 
+    # Byte-identical to what `RemediationPrompt.render(FINDING_ROW, repo: REPO)`
+    # produced before the major-version-path branching was added.
+    SAME_MAJOR_FIXTURE = <<~PROMPT
+      In the repository kylesnowschwartz/superset there is an open issue #4
+      titled "test: webhook path (throwaway)" (https://github.com/kylesnowschwartz/superset/issues/4). It was filed from pip-audit
+      output and reports that the pinned version of `urllib3`
+      (2.4.0) in `requirements/base.txt` is affected by the
+      following advisories: PYSEC-2026-141, PYSEC-2026-1998, PYSEC-2026-1994, PYSEC-2026-1996. The lowest
+      version that clears all of them is 2.7.0. Severity:
+      high. Remediation is due by 2026-09-04 08:25 UTC under
+      this repository's SECURITY-SLA.md policy.
+
+      Remediate this vulnerability:
+
+      1. Create a branch off `master` named `fix/urllib3-sla-4`.
+      2. Update the `urllib3` pin in `requirements/base.txt` to a
+         non-vulnerable version: at least 2.7.0, preferring the
+         latest release in the same major series. `requirements/base.txt` is a
+         uv-compiled lockfile (see its header). Attempt the proper regeneration
+         with `uv pip compile pyproject.toml requirements/base.in -o requirements/base.txt`
+         (Python 3.11+ is required; install it with `uv python install 3.11` if
+         needed). If the full recompile moves unrelated pins, fall back to editing
+         the `urllib3` line directly and say so explicitly in the PR
+         description. Either way, keep the change limited to this package.
+      3. Verify the fix: strip the `-e ./superset-core` line into a temp file and
+         run `pip-audit --disable-pip --no-deps -r` on that temp file; confirm
+         `urllib3` is no longer flagged. Other pre-existing findings
+         are out of scope — list them in the PR as out of scope, do not fix them.
+      4. Check nothing else pins or vendors `urllib3` (search
+         `requirements/`, `pyproject.toml`, `superset-core/pyproject.toml`).
+      5. Open a pull request against `master` of kylesnowschwartz/superset only — never against
+         `apache/superset`. Use the repository's PR template. The description must
+         state: the advisory IDs, before/after versions, the verification result,
+         and whether you regenerated the lockfile or edited the pin directly.
+         Reference the issue with "Fixes #4".
+
+      Do not modify any other dependencies or source files. Do not run the full
+      test suite; CI on the pull request runs the relevant unit tests.
+
+      When the pull request is open, provide your final structured output with
+      the PR URL, the before/after versions, the advisories cleared, which
+      lockfile route you took, and the pip-audit verification result.
+    PROMPT
+
     def test_render_names_the_finding_and_the_rules
       prompt = RemediationPrompt.render(FINDING_ROW, repo: REPO)
 
@@ -42,6 +86,54 @@ module SLA
       assert_includes prompt, 'Remediation is due by 2026-09-04 08:25 UTC'
       assert_includes prompt, 'named `fix/urllib3-sla-4`'
       assert_includes prompt, 'Reference the issue with "Fixes #4".'
+    end
+
+    def test_render_of_a_same_major_finding_is_byte_identical_to_the_pre_major_path_prompt
+      assert_equal SAME_MAJOR_FIXTURE, RemediationPrompt.render(FINDING_ROW, repo: REPO)
+    end
+
+    def test_render_of_a_same_major_finding_has_the_same_major_language
+      prompt = RemediationPrompt.render(FINDING_ROW, repo: REPO)
+
+      assert_includes prompt, 'preferring the'
+      assert_includes prompt, 'same major series'
+      assert_includes prompt, 'Do not modify any other dependencies or source files.'
+      refute_includes prompt, 'the lowest release of the new major series'
+      refute_includes prompt, 'pytest <paths>'
+    end
+
+    def test_render_of_a_major_version_finding_has_the_major_path_language
+      row = FINDING_ROW.merge(pinned: '2.3.3', fix_version: '3.1.3')
+      prompt = RemediationPrompt.render(row, repo: REPO)
+
+      assert_includes prompt, "to\n   3.1.3, the lowest release of the new major series"
+      assert_includes prompt, 'that clears the advisories.'
+      assert_includes prompt, 'minimal changes to'
+      assert_includes prompt, 'keep such changes to'
+      assert_includes prompt, 'pytest <paths>'
+      assert_includes prompt, 'If the suite cannot run in your'
+      assert_includes prompt, 'environment, say so in the pull request and rely on CI; do not skip the'
+      assert_includes prompt, 'change.'
+      assert_includes prompt, 'Make no dependency changes other than'
+      assert_includes prompt, 'Make no source changes beyond what the'
+      assert_includes prompt, 'upgrade breaks.'
+      refute_includes prompt, 'Do not modify any other dependencies or source files.'
+    end
+
+    def test_render_of_a_major_version_finding_asks_for_breaking_changes_and_tests_run_in_the_close
+      row = FINDING_ROW.merge(pinned: '2.3.3', fix_version: '3.1.3')
+      prompt = RemediationPrompt.render(row, repo: REPO)
+
+      assert_includes prompt, 'every source'
+      assert_includes prompt, 'or test file you changed with the reason (`breaking_changes`), and the'
+      assert_includes prompt, 'test commands you ran (`tests_run`).'
+    end
+
+    def test_render_of_a_same_major_finding_does_not_ask_for_breaking_changes_or_tests_run
+      prompt = RemediationPrompt.render(FINDING_ROW, repo: REPO)
+
+      refute_includes prompt, 'breaking_changes'
+      refute_includes prompt, 'tests_run'
     end
 
     def test_render_leaves_no_erb_tags
@@ -75,6 +167,22 @@ module SLA
       refute schemer.valid?(SAMPLE_OUTPUT.merge('lockfile_route' => 'guess'))
       refute schemer.valid?(SAMPLE_OUTPUT.except('pr_url'))
       refute schemer.valid?(SAMPLE_OUTPUT.merge('verification' => { 'tool' => 'pip-audit' }))
+    end
+
+    def test_schema_accepts_breaking_changes_and_tests_run
+      schemer = JSONSchemer.schema(RemediationPrompt.schema)
+      output = SAMPLE_OUTPUT.merge(
+        'breaking_changes' => [{ 'file' => 'superset/views/base.py', 'reason' => 'renamed keyword argument' }],
+        'tests_run' => ['pytest tests/unit_tests/views/test_base.py']
+      )
+
+      assert_empty schemer.validate(output).to_a
+    end
+
+    def test_schema_accepts_output_without_breaking_changes_or_tests_run
+      schemer = JSONSchemer.schema(RemediationPrompt.schema)
+
+      assert_empty schemer.validate(SAMPLE_OUTPUT).to_a
     end
 
     def test_schema_fits_the_session_request_limit
