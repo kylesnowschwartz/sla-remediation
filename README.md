@@ -147,7 +147,7 @@ cp .env.example .env
 Then build the image and start the three services:
 
 ```sh
-docker compose up --build
+docker compose up --build --detach --wait
 ```
 
 and open http://localhost:4567 for the status page. `curl
