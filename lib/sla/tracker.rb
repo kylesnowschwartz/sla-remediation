@@ -17,17 +17,19 @@ module SLA
   # session has stopped with a report or a pull request, or as "stalled" once it
   # has stopped with neither; closed rows are never fetched again from Devin.
   #
-  # A row with a pull request keeps being polled for its checks after it
-  # closes, as long as the checks have not resolved (still pending or red) and
-  # the pull request is neither merged nor closed.
+  # A row with a pull request keeps being polled on GitHub for its checks after
+  # it closes, until the checks are green or the pull request is merged or
+  # closed. Without a GitHub client the pull request is never looked at and
+  # the checks columns stay empty.
   class Tracker
     SETTLED = 'settled'
     STALLED = 'stalled'
-    UNRESOLVED_CHECKS = %w[pending failure].freeze
+    MERGED = 'merged'
+    UNRESOLVED_CHECKS = %w[pending failure none].freeze
     PR_URL_PATTERN = %r{github\.com/(?<repo>[^/]+/[^/]+)/pull/(?<number>\d+)}
     EMPTY_SUMMARY = { polled: 0, settled: 0, stalled: 0, notified: 0, errors: 0 }.freeze
 
-    def initialize(db:, devin:, notifier:, github:, schema: RemediationPrompt.schema, log: Logger.new($stdout))
+    def initialize(db:, devin:, notifier:, github: nil, schema: RemediationPrompt.schema, log: Logger.new($stdout))
       @db = db
       @devin = devin
       @notifier = notifier
@@ -36,13 +38,13 @@ module SLA
       @log = log
     end
 
-    # Polls every open session, then polls the pull request checks of every
-    # closed session still being watched. Returns
-    # {polled:, settled:, stalled:, notified:, errors:}.
+    # Polls the pull request checks of every closed session still being
+    # watched, then polls every open session (whose pull request is checked as
+    # part of the poll). Returns {polled:, settled:, stalled:, notified:, errors:}.
     def poll_once
       summary = EMPTY_SUMMARY.dup
+      watched_pr_sessions.each { |row| check_pr(row, summary) } if @github
       open_sessions.each { |row| poll_one(row, summary) }
-      watched_pr_sessions.each { |row| check_pr_once(row, summary) }
       summary
     end
 
@@ -66,17 +68,10 @@ module SLA
       log_session_error(row, e)
     end
 
-    def check_pr_once(row, summary)
-      check_pr(row)
-    rescue StandardError => e
-      summary[:errors] += 1
-      log_session_error(row, e)
-    end
-
     def poll(row, summary)
       session = @devin.session(row[:devin_session_id])
       row = record(row, session)
-      row = check_pr(row) if row[:pr_url]
+      row = check_pr(row, summary) if row[:pr_url] && @github
       notify(row, summary) if row[:pr_url] && row[:pr_notified_at].nil?
       close(row, session, summary)
     end
@@ -154,33 +149,51 @@ module SLA
       findings.where(id: row[:finding_id]).get(:issue_number)
     end
 
-    # Fetches the pull request's checks and merged state and writes them onto
-    # the row. Logs (without a new issue comment) when checks turn from
-    # pending to failure.
-    def check_pr(row)
+    # Fetches the pull request's state, merge time and checks and writes them
+    # onto the row, returning the row as updated. A failure here is logged and
+    # counted but leaves the row (and the rest of the poll) alone. Logs
+    # (without a new issue comment) when checks turn red.
+    def check_pr(row, summary)
       status = pull_request_status(row)
       log_checks_failing(row, status)
       changes = pr_changes(row, status)
-      sessions.where(id: row[:id]).update(changes)
+      sessions.where(id: row[:id]).update(changes) unless changes.empty?
       row.merge(changes)
+    rescue StandardError => e
+      summary[:errors] += 1
+      log_session_error(row, e)
+      row
     end
 
     def pull_request_status(row)
       match = row[:pr_url].match(PR_URL_PATTERN)
+      raise Error, "pull request URL #{row[:pr_url]} is not a GitHub pull request" unless match
+
       @github.pull_request_status(match[:repo], match[:number].to_i)
     end
 
+    # The check state and its time change together, and only when the state
+    # changes; the time is when the checks completed, or when they were seen
+    # while still pending or absent. The merge time is written once.
     def pr_changes(row, status)
-      changes = {}
-      changes.merge!(pr_checks: status.checks, pr_checks_at: Time.now.utc) if status.checks != row[:pr_checks]
-      changes[:pr_merged_at] = Time.now.utc if status.merged && row[:pr_merged_at].nil?
-      changes
+      changes = { pr_state: status.merged ? MERGED : status.state }
+      changes.merge!(checks_changes(status)) if status.checks != row[:pr_checks]
+      changes.merge!(merge_changes(status)) if status.merged && row[:pr_merged_at].nil?
+      changes.reject { |column, value| row[column] == value }
+    end
+
+    def checks_changes(status)
+      { pr_checks: status.checks, pr_checks_at: status.checks_at || Time.now.utc }
+    end
+
+    def merge_changes(status)
+      { pr_merged_at: status.merged_at || Time.now.utc }
     end
 
     def log_checks_failing(row, status)
-      return unless row[:pr_checks] == 'pending' && status.checks == 'failure'
+      return unless status.checks == 'failure' && row[:pr_checks] != 'failure'
 
-      @log.info("tracker issue ##{issue_number(row)}: pull request #{row[:pr_url]} checks turned red")
+      @log.info("tracker issue ##{issue_number(row)}: pull request #{row[:pr_url]} checks are red")
     end
 
     def log_session_error(row, error)
@@ -191,8 +204,9 @@ module SLA
       sessions.where(outcome: nil).exclude(devin_session_id: nil).order(:id).all
     end
 
-    # Closed sessions whose pull request is not yet merged or closed, and
-    # whose checks have not yet resolved to green.
+    # Closed sessions whose pull request is neither merged nor closed and
+    # whose checks are not yet green: unobserved, pending, red, or absent (a
+    # fresh push has no check runs until its workflows start).
     def watched_pr_sessions
       sessions.exclude(outcome: nil)
               .exclude(pr_url: nil)

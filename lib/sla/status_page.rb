@@ -127,18 +127,19 @@ module SLA
         StatusPage.time(record[:pr_merged_at] || record[:pr_checks_at])
       end
 
-      # The time the pull request first turned green (merged, or its checks
-      # passed), or nil while it has not.
+      # When the pull request turned green: its merge time, else the time its
+      # checks last completed while they are passing (a later push that goes
+      # green again moves this forward), or nil while it has not.
       def green_at
         record[:pr_merged_at] || (record[:pr_checks] == 'success' ? record[:pr_checks_at] : nil)
       end
 
-      # How long the session ran before its pull request turned green, or nil
-      # when it has not (yet, or ever).
-      def time_to_green
+      # Seconds from the session's start to the pull request turning green, or
+      # nil when either time is missing.
+      def seconds_to_green
         return nil unless record[:started_at] && green_at
 
-        StatusPage.duration(green_at - record[:started_at])
+        green_at - record[:started_at]
       end
 
       def acus
@@ -260,9 +261,7 @@ module SLA
     private
 
     def median_time_to_green
-      seconds = rows.filter_map do |row|
-        row.green_at && row.record[:started_at] && (row.green_at - row.record[:started_at])
-      end
+      seconds = rows.filter_map(&:seconds_to_green)
       return NOT_YET if seconds.empty?
 
       self.class.duration(median(seconds))

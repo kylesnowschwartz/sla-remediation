@@ -3,6 +3,9 @@
 Devin sessions never report back on their own, so the tracker asks. It polls
 every open session, records what it sees, decides when a session is finished
 and whether it delivered, and tells the issue about the pull request once.
+It then follows the pull request on GitHub until it is merged, closed, or
+green, so the status page can judge a finding fixed by the pull request
+passing rather than by the session ending.
 
 ## What is polled
 
@@ -12,9 +15,10 @@ Proof: test/tracker_test.rb test_working_session_stays_open,
 test_rows_without_a_devin_session_id_are_skipped
 
 **TRACK-02** WHEN a row has an outcome, THE tracker SHALL never fetch its
-session again.
+session again (its pull request may still be followed; see TRACK-22).
 Proof: test/tracker_test.rb test_settled_session_with_pull_request_and_output_is_recorded_and_notified_once,
-test_suspended_session_without_report_or_pull_request_is_stalled
+test_suspended_session_without_report_or_pull_request_is_stalled,
+test_a_settled_row_with_pending_checks_is_watched_until_they_pass
 
 ## What is recorded
 
@@ -97,8 +101,63 @@ Proof: test/notifier_test.rb test_issue_comment_posts_the_links_and_inside_the_w
 test_issue_comment_says_past_the_window_after_the_due_date
 
 **TRACK-16** WHILE `SLA_GITHUB_TOKEN` is unset, THE tracker SHALL use a
-notifier that posts nothing.
-Proof: test/notifier_test.rb test_null_posts_nothing (the wiring in `bin/track` is unproven)
+notifier that posts nothing and SHALL not ask GitHub about pull requests at
+all, so that it never polls anonymously.
+Proof: test/notifier_test.rb test_null_posts_nothing;
+test/tracker_test.rb test_without_a_github_client_pull_requests_are_never_looked_at
+(the wiring in `bin/track` is unproven)
+
+## Following the pull request
+
+**TRACK-22** THE tracker SHALL ask GitHub about a row's pull request on
+every poll of an open session that has one, and on every round for a
+closed row whose pull request is not yet merged or closed and whose checks
+are not yet `success` (unobserved, `none`, `pending`, or `failure`). Rows
+whose pull request is merged, closed, or green SHALL not be asked about
+again.
+Proof: test/tracker_test.rb test_a_settled_row_with_pending_checks_is_watched_until_they_pass,
+test_a_settled_row_without_check_runs_yet_is_watched_until_they_appear,
+test_a_merged_pull_request_records_the_merge_time_and_state_and_stops_being_watched,
+test_a_pull_request_closed_without_merging_stops_being_watched
+
+**TRACK-23** WHEN GitHub answers, THE tracker SHALL record the pull
+request's state as `merged`, `closed`, or `open` from GitHub (replacing what
+the session reported), the aggregate check state (`success` when every
+completed run passed, was neutral, or was skipped; `failure` when any run
+failed; `pending` while any run is unfinished; `none` when there are no
+runs), and the merge time once.
+Proof: test/tracker_test.rb test_a_merged_pull_request_records_the_merge_time_and_state_and_stops_being_watched,
+test_a_pull_request_closed_without_merging_stops_being_watched;
+test/github_client_test.rb test_pull_request_status_is_success_when_every_run_completed_and_passed,
+test_pull_request_status_is_failure_when_a_completed_run_failed,
+test_pull_request_status_is_pending_without_a_time_when_a_run_has_not_completed,
+test_pull_request_status_is_none_when_there_are_no_check_runs_and_reads_the_merge
+
+**TRACK-24** THE times recorded for a merge and for completed checks SHALL
+be GitHub's own (`merged_at`, and the latest `completed_at` among the check
+runs), not the time the tracker noticed them, so an outage does not turn a
+timely fix late. WHILE checks are `pending` or `none`, the check time SHALL
+be when the tracker saw them.
+Proof: test/tracker_test.rb test_settled_session_with_pull_request_and_output_is_recorded_and_notified_once,
+test_a_settled_row_without_check_runs_yet_is_watched_until_they_appear,
+test_a_merged_pull_request_records_the_merge_time_and_state_and_stops_being_watched;
+test/github_client_test.rb test_pull_request_status_is_success_when_every_run_completed_and_passed
+
+**TRACK-25** WHILE the check state is unchanged, THE tracker SHALL leave the
+check time alone.
+Proof: test/tracker_test.rb test_pr_checks_at_is_unchanged_when_checks_are_still_success
+
+**TRACK-26** WHEN the checks turn `failure` from any other state, THE
+tracker SHALL log it once, naming the issue and pull request.
+Proof: test/tracker_test.rb test_a_settled_row_without_check_runs_yet_is_watched_until_they_appear
+
+**TRACK-27** IF asking GitHub fails, or the pull request URL is not a GitHub
+pull request, THEN THE tracker SHALL log the error, count it, leave the
+row's pull request columns as they were, and still announce the pull
+request and decide the session's outcome in the same poll.
+Proof: test/tracker_test.rb test_a_github_error_while_checking_the_pull_request_is_counted_and_leaves_the_row_alone,
+test_a_github_error_during_an_open_poll_still_notifies_and_closes_the_session,
+test_a_pull_request_url_off_github_is_an_error_not_a_crash
 
 ## The polling round
 
@@ -107,8 +166,10 @@ count it, and continue with the remaining sessions in the same round.
 Proof: test/tracker_test.rb test_an_error_for_one_session_does_not_stop_the_others
 
 **TRACK-18** EACH round SHALL yield a summary counting sessions polled,
-settled, stalled, notified, and errored.
-Proof: test/tracker_test.rb test_an_error_for_one_session_does_not_stop_the_others
+settled, stalled, notified, and errors (from session polls and pull
+request checks alike).
+Proof: test/tracker_test.rb test_an_error_for_one_session_does_not_stop_the_others,
+test_a_github_error_while_checking_the_pull_request_is_counted_and_leaves_the_row_alone
 
 **TRACK-19** WHEN run as a loop, THE tracker SHALL poll, report the round,
 sleep the interval, and repeat until stopped.
@@ -127,12 +188,17 @@ Proof: unproven
 
 ## Unproven
 
-TRACK-20, TRACK-21, and the notifier wiring in TRACK-16. The command-line
-entry point has no tests.
+TRACK-20, TRACK-21, and the notifier and GitHub wiring in TRACK-16. The
+command-line entry point has no tests.
 
 ## Not specified
 
 - The wording of log lines.
+- Legacy commit statuses; only the Checks API is read, and only the first
+  100 check runs on the head commit.
+- Whether a pull request that turns green, then red again, is judged by
+  its earlier green; the tracker records the latest state, and the status
+  page spec decides what that means.
 - Whether a stored valid structured output is ever replaced by a later one;
   the tracker keeps the first, but no test holds it to that.
 - Resuming, terminating, or archiving sessions; the tracker only reads.
