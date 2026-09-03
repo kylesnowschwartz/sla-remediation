@@ -6,7 +6,7 @@ services:
     ports:
       - "4567:4567"
     volumes:
-      - sla-db:/app/db
+      - sla-db:/app/data
     env_file:
       - path: .env
         required: false
@@ -23,7 +23,7 @@ services:
     command: bin/track --loop
     tty: true
     volumes:
-      - sla-db:/app/db
+      - sla-db:/app/data
     env_file:
       - path: .env
         required: false

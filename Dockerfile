@@ -18,6 +18,7 @@ RUN gem install bundler -v "$(tail -n1 Gemfile.lock | tr -d ' ')" \
 
 COPY . .
 
-ENV SLA_DATABASE_URL=sqlite:///app/db/sla.sqlite3
+RUN mkdir -p /app/data
+ENV SLA_DATABASE_URL=sqlite:///app/data/sla.sqlite3
 EXPOSE 4567
 CMD ["bin/server"]

@@ -201,7 +201,7 @@ through direnv:
 - `SLA_AUTO_DISPATCH` — set to `true` so a labelled issue starts a Devin session automatically; leave unset to only record findings.
 - `SMEE_URL` — the smee.io channel URL that the fork's webhook points at; only the smee client reads it.
 
-`SLA_DATABASE_URL` (optional) overrides the Sequel connection string; it defaults to `sqlite://db/sla.sqlite3`, and the Docker image sets it to `sqlite:///app/db/sla.sqlite3`.
+`SLA_DATABASE_URL` (optional) overrides the Sequel connection string; it defaults to `sqlite://db/sla.sqlite3`, and the Docker image sets it to `sqlite:///app/data/sla.sqlite3`.
 
 ## The demo fork
 
