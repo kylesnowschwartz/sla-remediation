@@ -13,28 +13,85 @@ module SLA
       DB[:findings].delete
     end
 
-    def test_met_when_the_pull_request_was_seen_before_the_due_date
+    def test_met_when_the_pull_request_merged_before_the_due_date
       finding_id = record_finding(1)
-      record_session(finding_id, devin_session_id: SESSION_ID, outcome: 'settled', pr_state: 'open',
+      record_session(finding_id, devin_session_id: SESSION_ID, outcome: 'settled', pr_state: 'merged',
                                  pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9',
-                                 pr_notified_at: DUE - 3600)
+                                 pr_notified_at: DUE - 3600, pr_merged_at: DUE - 1800)
 
       row = page.rows.fetch(0)
 
       assert_equal 'met', row.sla
       assert_equal 'sla-met', row.sla_class
       assert_equal '9', row.pr_number
-      assert_equal 'open', row.pr_state
+      assert_equal 'merged', row.pr_state
       assert_equal 'settled', row.devin
       assert_equal "https://app.devin.ai/sessions/#{SESSION_ID}", row.devin_url
     end
 
-    def test_late_when_the_pull_request_was_seen_after_the_due_date
+    def test_met_when_the_pull_request_checks_went_green_before_the_due_date
       finding_id = record_finding(1)
       record_session(finding_id, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9', pr_state: 'open',
-                                 pr_notified_at: DUE + 60, outcome: 'settled')
+                                 pr_notified_at: DUE - 3600, pr_checks: 'success', pr_checks_at: DUE - 1800,
+                                 outcome: 'settled')
+
+      assert_equal 'met', page.rows.fetch(0).sla
+    end
+
+    def test_met_stays_met_when_evaluated_long_after_the_due_date
+      finding_id = record_finding(1)
+      record_session(finding_id, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9', pr_state: 'open',
+                                 pr_notified_at: DUE - 3600, pr_checks: 'success', pr_checks_at: DUE - 1800,
+                                 outcome: 'settled')
+
+      assert_equal 'met', page(now: DUE + 86_400).rows.fetch(0).sla
+    end
+
+    def test_late_when_the_pull_request_merged_after_the_due_date
+      finding_id = record_finding(1)
+      record_session(finding_id, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9', pr_state: 'merged',
+                                 pr_notified_at: DUE + 60, pr_merged_at: DUE + 90, outcome: 'settled')
 
       assert_equal 'late', page(now: DUE + 120).rows.fetch(0).sla
+    end
+
+    def test_in_progress_when_the_pull_requests_checks_are_pending
+      finding_id = record_finding(1)
+      record_session(finding_id, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9', pr_state: 'open',
+                                 pr_notified_at: DUE - 3600, pr_checks: 'pending', pr_checks_at: NOW)
+
+      row = page.rows.fetch(0)
+
+      assert_equal 'in progress', row.sla
+      assert_equal 'sla-in-progress', row.sla_class
+    end
+
+    def test_ci_failing_when_checks_are_red_inside_the_window
+      finding_id = record_finding(1)
+      record_session(finding_id, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9', pr_state: 'open',
+                                 pr_notified_at: DUE - 3600, pr_checks: 'failure', pr_checks_at: NOW)
+
+      row = page.rows.fetch(0)
+
+      assert_equal 'ci failing', row.sla
+      assert_equal 'sla-ci-failing', row.sla_class
+      assert_equal '[CI FAILING]', row.sla_tag
+    end
+
+    def test_breached_when_checks_are_still_red_past_the_due_date
+      finding_id = record_finding(1)
+      record_session(finding_id, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9', pr_state: 'open',
+                                 pr_notified_at: DUE - 3600, pr_checks: 'failure', pr_checks_at: DUE + 30)
+
+      assert_equal 'breached', page(now: DUE + 60).rows.fetch(0).sla
+    end
+
+    def test_breached_when_a_pull_request_is_open_but_never_went_green_past_the_due_date
+      finding_id = record_finding(1)
+      record_session(finding_id, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9', pr_state: 'open',
+                                 pr_notified_at: DUE - 3600)
+
+      assert_equal 'breached', page(now: DUE + 60).rows.fetch(0).sla
     end
 
     def test_breached_when_there_is_no_pull_request_and_the_due_date_has_passed
@@ -112,11 +169,13 @@ module SLA
       assert_equal [5, 2, 3, 6, 1, 4], page.rows.map(&:issue_number)
     end
 
-    def test_summary_counts_findings_open_pull_requests_and_the_two_sides_of_the_window
+    def test_summary_counts_findings_and_the_two_sides_of_the_window
       record_session(record_finding(1, due_at: DUE), pr_url: 'https://github.com/x/y/pull/1', pr_state: 'open',
-                                                     pr_notified_at: DUE - 60, outcome: 'settled')
+                                                     pr_notified_at: DUE - 60, pr_checks: 'success',
+                                                     pr_checks_at: DUE - 30, outcome: 'settled')
       record_session(record_finding(2, due_at: DUE), pr_url: 'https://github.com/x/y/pull/2', pr_state: 'merged',
-                                                     pr_notified_at: DUE + 60, outcome: 'settled')
+                                                     pr_notified_at: DUE + 60, pr_merged_at: DUE + 90,
+                                                     outcome: 'settled')
       record_session(record_finding(3, due_at: NOW - 60), status: 'running', status_detail: 'working')
       record_session(record_finding(4, due_at: DUE), status: 'suspended', status_detail: 'inactivity',
                                                      outcome: 'stalled')
@@ -125,16 +184,33 @@ module SLA
       summary = page.summary
 
       assert_equal 5, summary.findings
-      assert_equal 1, summary.pull_requests_open
-      assert_equal 3, summary.inside_sla
+      assert_equal 1, summary.fixed_inside_sla
       assert_equal 2, summary.breached
       assert_equal %w[breached met late stalled waiting], page.rows.map(&:sla)
+    end
+
+    def test_median_time_to_green_is_not_yet_before_any_pull_request_goes_green
+      record_finding(1)
+
+      assert_equal 'not yet', page.summary.median_time_to_green
+    end
+
+    def test_median_time_to_green_is_computed_from_dispatch_to_first_green
+      record_session(record_finding(1), pr_url: 'https://github.com/x/y/pull/1', pr_state: 'merged',
+                                        started_at: Time.utc(2026, 9, 2, 8, 0, 0), pr_merged_at: Time.utc(2026, 9, 2,
+                                                                                                          8, 20, 0))
+      record_session(record_finding(2), pr_url: 'https://github.com/x/y/pull/2', pr_state: 'open',
+                                        started_at: Time.utc(2026, 9, 2, 8, 0, 0), pr_checks: 'success',
+                                        pr_checks_at: Time.utc(2026, 9, 2, 8, 40, 0))
+
+      assert_equal '30m 0s', page.summary.median_time_to_green
     end
 
     def test_row_strings_are_formatted_for_the_template
       finding_id = record_finding(8, fix_version: nil)
       record_session(finding_id, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9', pr_state: 'open',
-                                 pr_notified_at: Time.utc(2026, 9, 2, 8, 44, 0), acus_consumed: 1.25)
+                                 pr_notified_at: Time.utc(2026, 9, 2, 8, 44, 0), acus_consumed: 1.25,
+                                 pr_checks: 'success', pr_checks_at: Time.utc(2026, 9, 2, 8, 44, 0))
 
       row = page.rows.fetch(0)
 
@@ -188,12 +264,12 @@ module SLA
       assert page.rows.fetch(0).acus_reported?
     end
 
-    def test_a_pull_request_whose_comment_is_being_retried_is_judged_by_now
+    def test_a_pull_request_without_observed_checks_yet_is_in_progress_then_breached
       finding_id = record_finding(1)
       record_session(finding_id, pr_url: 'https://github.com/x/y/pull/1', pr_state: 'open', pr_notified_at: nil)
 
-      assert_equal 'met', page.rows.fetch(0).sla
-      assert_equal 'late', page(now: DUE + 1).rows.fetch(0).sla
+      assert_equal 'in progress', page.rows.fetch(0).sla
+      assert_equal 'breached', page(now: DUE + 1).rows.fetch(0).sla
       assert_nil page.rows.fetch(0).time_to_pr
     end
 
@@ -206,8 +282,8 @@ module SLA
 
     def test_overdue_depends_on_the_sla_word_not_only_on_the_clock
       finding_id = record_finding(1)
-      record_session(finding_id, pr_url: 'https://github.com/x/y/pull/1', pr_state: 'open',
-                                 pr_notified_at: DUE - 3600, outcome: 'settled')
+      record_session(finding_id, pr_url: 'https://github.com/x/y/pull/1', pr_state: 'merged',
+                                 pr_notified_at: DUE - 3600, pr_merged_at: DUE - 1800, outcome: 'settled')
 
       row = page(now: DUE + 3600).rows.fetch(0)
 
@@ -265,6 +341,31 @@ module SLA
       record_session(finding_id, structured_output: nil, structured_output_invalid: JSON.generate(package: 'urllib3'))
 
       assert_equal 'report rejected (schema)', page.rows.fetch(0).lockfile
+    end
+
+    def test_checks_line_shows_the_check_state_and_when_it_was_observed
+      record_finding(1)
+
+      refute page.rows.fetch(0).checks?
+
+      finding_id = record_finding(2)
+      record_session(finding_id, pr_url: 'https://github.com/x/y/pull/1', pr_state: 'open', pr_checks: 'pending',
+                                 pr_checks_at: Time.utc(2026, 9, 2, 8, 44, 0))
+
+      row = page.rows.find { |r| r.issue_number == 2 }
+
+      assert row.checks?
+      assert_equal 'pending', row.checks
+      assert_equal '2026-09-02 08:44 UTC', row.checks_observed_at
+
+      finding_id2 = record_finding(3)
+      record_session(finding_id2, pr_url: 'https://github.com/x/y/pull/2', pr_state: 'merged',
+                                  pr_checks: 'success', pr_checks_at: Time.utc(2026, 9, 2, 8, 44, 0),
+                                  pr_merged_at: Time.utc(2026, 9, 2, 9, 0, 0))
+
+      row3 = page.rows.find { |r| r.issue_number == 3 }
+
+      assert_equal '2026-09-02 09:00 UTC', row3.checks_observed_at
     end
 
     def test_session_status_reads_status_slash_detail_and_the_outcome

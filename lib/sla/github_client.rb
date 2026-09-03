@@ -2,6 +2,7 @@
 
 require 'base64'
 require 'faraday'
+require 'time'
 
 require_relative 'errors'
 
@@ -13,11 +14,25 @@ module SLA
     TIMEOUT_SECONDS = 15
     ISSUES_PER_PAGE = 100
     PULLS_PER_PAGE = 100
+    CHECK_RUNS_PER_PAGE = 100
+
+    CHECK_RUN_FAILURE_CONCLUSIONS = %w[failure timed_out cancelled action_required].freeze
+    CHECK_RUN_SUCCESS_CONCLUSIONS = %w[success neutral skipped].freeze
 
     Advisory = Struct.new(:ghsa_id, :cve_id, :severity, :summary, keyword_init: true)
     Issue = Struct.new(:number, :title, :body, :html_url, keyword_init: true)
     PullRequest = Struct.new(:number, :title, :html_url, :head_branch, keyword_init: true)
     FileContents = Struct.new(:text, :sha, keyword_init: true)
+    # `state` is GitHub's "open" or "closed"; `merged_at` is the merge time or
+    # nil. `checks` is one of "pending" (a run is not yet completed), "failure"
+    # (a completed run failed, timed out, was cancelled, or needs action),
+    # "success" (every completed run succeeded, was neutral, or was skipped),
+    # or "none" (the head commit has no check runs at all). `checks_at` is when
+    # the last run completed for "success" and "failure", and nil otherwise.
+    # Only the Checks API is read, so commit statuses posted by CI systems
+    # outside GitHub Actions are not seen.
+    PullRequestStatus = Struct.new(:head_sha, :state, :mergeable, :merged, :merged_at, :checks, :checks_at,
+                                   keyword_init: true)
 
     # Without a token the client is anonymous, which is enough for the public
     # advisories endpoint but not for reading or filing issues.
@@ -102,6 +117,19 @@ module SLA
       build_pull_request(item) if item
     end
 
+    # The pull request's head sha, open/closed and mergeable/merged state, and
+    # the combined result of the check runs on that sha.
+    def pull_request_status(repo, number)
+      pull = request(:get, "/repos/#{repo}/pulls/#{number}")
+      sha = pull.dig('head', 'sha')
+      runs = request(:get, "/repos/#{repo}/commits/#{sha}/check-runs",
+                     params: { per_page: CHECK_RUNS_PER_PAGE }).fetch('check_runs')
+      checks = check_state(runs)
+      PullRequestStatus.new(head_sha: sha, state: pull['state'], mergeable: pull['mergeable'],
+                            merged: pull['merged'], merged_at: parse_time(pull['merged_at']),
+                            checks: checks, checks_at: checks_completed_at(runs, checks))
+    end
+
     # Whether the repository has a branch of that name; the ref endpoint answers 404 when it does not.
     def branch_exists?(repo, branch)
       request(:get, "/repos/#{repo}/git/ref/heads/#{branch}")
@@ -138,6 +166,40 @@ module SLA
     def build_pull_request(item)
       PullRequest.new(number: item.fetch('number'), title: item['title'], html_url: item['html_url'],
                       head_branch: item.dig('head', 'ref'))
+    end
+
+    # rubocop:disable Metrics/CyclomaticComplexity -- four states decided in order; splitting further would
+    # scatter one decision table across more methods than it clarifies.
+    def check_state(runs)
+      return 'none' if runs.empty?
+      return 'pending' if runs.any?(&method(:pending_run?))
+      return 'failure' if runs.any?(&method(:failed_run?))
+
+      runs.all?(&method(:passed_run?)) ? 'success' : 'failure'
+    end
+    # rubocop:enable Metrics/CyclomaticComplexity
+
+    def pending_run?(run)
+      run['status'] != 'completed'
+    end
+
+    def failed_run?(run)
+      CHECK_RUN_FAILURE_CONCLUSIONS.include?(run['conclusion'])
+    end
+
+    def passed_run?(run)
+      CHECK_RUN_SUCCESS_CONCLUSIONS.include?(run['conclusion'])
+    end
+
+    # When the last run finished, which is when the combined result was decided.
+    def checks_completed_at(runs, checks)
+      return nil unless %w[success failure].include?(checks)
+
+      runs.filter_map { |run| parse_time(run['completed_at']) }.max
+    end
+
+    def parse_time(value)
+      Time.iso8601(value).utc if value
     end
 
     def request(method, path, params: nil, payload: nil)

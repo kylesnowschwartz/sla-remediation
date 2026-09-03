@@ -13,6 +13,7 @@ module SLA
     REF_URL = 'https://api.github.com/repos/kylesnowschwartz/superset/git/ref/heads/fix/urllib3-sla-4'
     REFS_URL = 'https://api.github.com/repos/kylesnowschwartz/superset/git/refs/heads/fix/urllib3-sla-4'
     REQUIREMENTS_URL = 'https://api.github.com/repos/kylesnowschwartz/superset/contents/requirements/base.txt'
+    CHECK_RUNS_URL = 'https://api.github.com/repos/kylesnowschwartz/superset/commits/abc123/check-runs'
     HEADERS = {
       'Authorization' => "Bearer #{TOKEN}",
       'Accept' => 'application/vnd.github+json',
@@ -197,6 +198,67 @@ module SLA
       assert_requested :patch, "#{PULLS_URL}/9", headers: HEADERS, body: { state: 'closed' }.to_json
       assert_equal 9, pull.number
       assert_equal 'fix/urllib3-sla-4', pull.head_branch
+    end
+
+    def stub_pull_and_checks(pull, check_runs)
+      stub_request(:get, "#{PULLS_URL}/9")
+        .to_return(status: 200, body: { number: 9, head: { sha: 'abc123' } }.merge(pull).to_json,
+                   headers: json_header)
+      stub_request(:get, CHECK_RUNS_URL).with(query: { per_page: '100' })
+                                        .to_return(status: 200, body: { check_runs: check_runs }.to_json,
+                                                   headers: json_header)
+    end
+
+    def test_pull_request_status_is_success_when_every_run_completed_and_passed
+      stub_pull_and_checks({ state: 'open', merged: false, merged_at: nil, mergeable: true },
+                           [{ status: 'completed', conclusion: 'success', completed_at: '2026-09-02T08:40:00Z' },
+                            { status: 'completed', conclusion: 'neutral', completed_at: '2026-09-02T08:44:00Z' },
+                            { status: 'completed', conclusion: 'skipped', completed_at: '2026-09-02T08:42:00Z' }])
+
+      status = @client.pull_request_status('kylesnowschwartz/superset', 9)
+
+      assert_requested :get, CHECK_RUNS_URL, query: { per_page: '100' }, headers: HEADERS
+      assert_equal 'abc123', status.head_sha
+      assert_equal 'open', status.state
+      assert_equal false, status.merged
+      assert_nil status.merged_at
+      assert_equal true, status.mergeable
+      assert_equal 'success', status.checks
+      assert_equal Time.utc(2026, 9, 2, 8, 44, 0), status.checks_at
+    end
+
+    def test_pull_request_status_is_pending_without_a_time_when_a_run_has_not_completed
+      stub_pull_and_checks({ state: 'open', merged: false, merged_at: nil, mergeable: nil },
+                           [{ status: 'completed', conclusion: 'success', completed_at: '2026-09-02T08:40:00Z' },
+                            { status: 'in_progress', conclusion: nil, completed_at: nil }])
+
+      status = @client.pull_request_status('kylesnowschwartz/superset', 9)
+
+      assert_equal 'pending', status.checks
+      assert_nil status.checks_at
+    end
+
+    def test_pull_request_status_is_failure_when_a_completed_run_failed
+      stub_pull_and_checks({ state: 'open', merged: false, merged_at: nil, mergeable: false },
+                           [{ status: 'completed', conclusion: 'success', completed_at: '2026-09-02T08:40:00Z' },
+                            { status: 'completed', conclusion: 'failure', completed_at: '2026-09-02T08:41:00Z' }])
+
+      status = @client.pull_request_status('kylesnowschwartz/superset', 9)
+
+      assert_equal 'failure', status.checks
+      assert_equal Time.utc(2026, 9, 2, 8, 41, 0), status.checks_at
+    end
+
+    def test_pull_request_status_is_none_when_there_are_no_check_runs_and_reads_the_merge
+      stub_pull_and_checks({ state: 'closed', merged: true, merged_at: '2026-09-02T09:00:00Z', mergeable: nil }, [])
+
+      status = @client.pull_request_status('kylesnowschwartz/superset', 9)
+
+      assert_equal 'none', status.checks
+      assert_nil status.checks_at
+      assert_equal 'closed', status.state
+      assert_equal true, status.merged
+      assert_equal Time.utc(2026, 9, 2, 9, 0, 0), status.merged_at
     end
 
     def test_delete_branch_deletes_the_head_ref

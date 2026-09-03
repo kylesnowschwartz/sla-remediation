@@ -7,8 +7,9 @@
 #   bin/track --loop    # a round every 15 s until INT or TERM, printing each summary
 #
 # Needs DEVIN_SERVICE_API_KEY_V3 and DEVIN_ORG_ID. With SLA_GITHUB_TOKEN and
-# SLA_REPO set it comments on the finding's issue when a pull request appears;
-# without them nothing is posted.
+# SLA_REPO set it comments on the finding's issue when a pull request appears
+# and follows the pull request's checks and merge on GitHub; without them
+# nothing is posted and the pull request is not looked at.
 
 require 'bundler/setup'
 require 'logger'
@@ -35,15 +36,15 @@ unless missing.empty?
   exit 1
 end
 
-notifier =
-  if ENV['SLA_GITHUB_TOKEN'].to_s.empty?
-    SLA::Notifier::Null.new
-  else
-    SLA::Notifier::IssueComment.new(github: SLA::GitHubClient.new(token: ENV.fetch('SLA_GITHUB_TOKEN')),
-                                    repo: ENV.fetch('SLA_REPO'))
-  end
+github = nil
+notifier = SLA::Notifier::Null.new
+unless ENV['SLA_GITHUB_TOKEN'].to_s.empty?
+  github = SLA::GitHubClient.new(token: ENV.fetch('SLA_GITHUB_TOKEN'))
+  notifier = SLA::Notifier::IssueComment.new(github: github, repo: ENV.fetch('SLA_REPO'))
+end
 
-tracker = SLA::Tracker.new(db: SLA::DB, devin: SLA::DevinClient.new, notifier: notifier, log: Logger.new($stderr))
+tracker = SLA::Tracker.new(db: SLA::DB, devin: SLA::DevinClient.new, notifier: notifier, github: github,
+                           log: Logger.new($stderr))
 summary_line = ->(summary) { summary.map { |key, value| "#{key}=#{value}" }.join(' ') }
 
 unless loop_forever

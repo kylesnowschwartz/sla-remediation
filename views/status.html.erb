@@ -72,7 +72,7 @@
     .tag { font-weight: var(--weight-bold); }
     .sla-met { color: var(--positive); }
     .sla-in-progress, .sla-waiting { color: var(--warning); }
-    .sla-breached, .sla-late { color: var(--critical); }
+    .sla-breached, .sla-late, .sla-ci-failing { color: var(--critical); }
     .sla-stalled { color: var(--muted); }
     .overdue { color: var(--critical); }
     a { color: var(--accent); text-decoration: none; }
@@ -127,9 +127,12 @@
 
   <div class="summary">
     <span><b><%= h @page.summary.findings %></b> <span class="label">findings</span></span>
-    <span><b><%= h @page.summary.pull_requests_open %></b> <span class="label">PRs open</span></span>
-    <span><b><%= h @page.summary.inside_sla %></b> <span class="label">inside SLA</span></span>
+    <span class="label">&middot;</span>
+    <span><b><%= h @page.summary.fixed_inside_sla %></b> <span class="label">fixed inside SLA</span></span>
+    <span class="label">&middot;</span>
     <span><b class="breached-count"><%= h @page.summary.breached %></b> <span class="label">breached</span></span>
+    <span class="label">&middot;</span>
+    <span class="label">median time to green</span> <b><%= h @page.summary.median_time_to_green %></b>
   </div>
 
   <div class="scroll-x">
@@ -212,6 +215,9 @@
           <% end %>
           <% if row.time_to_pr %>
             <dt>time to PR</dt><dd><%= h row.time_to_pr %> <span class="muted">as first seen by the tracker</span></dd>
+          <% end %>
+          <% if row.checks? %>
+            <dt>checks</dt><dd><%= h row.checks %> <span class="muted">as of <%= h row.checks_observed_at %></span></dd>
           <% end %>
           <% if row.session? && row.acus_reported? %>
             <dt>ACUs</dt><dd><%= h row.acus %></dd>
