@@ -1,19 +1,15 @@
 # Architecture
 
-Every box is a named actor; every arrow is one data flow with its direction.
-Rendered: `architecture.png` (regenerate with `mmdc -i architecture.mmd -o architecture.png -b white -s 2 -w 1600`).
+Every box is a named actor; every arrow is one directed data flow. The rendered copy is `architecture.png`; regenerate it with `mmdc -i architecture.mmd -o architecture.png -b white -s 2 -w 1600`.
 
 ```mermaid
 flowchart LR
   subgraph fork["GitHub fork: kylesnowschwartz/superset"]
     direction TB
-    SLA[SECURITY-SLA.md<br/>+ policy issue]
-    ISS[Issues<br/>label: sla-remediation<br/>yaml finding block]
+    SLA[SECURITY-SLA.md<br/>+ policy issue]; ISS[Issues<br/>label: sla-remediation<br/>yaml finding block]
     PR[Pull requests]
-    CI[Actions CI]
-    PR --> CI
+    PR --> CI[Actions CI]
   end
-
   subgraph svc["sla-remediation service (Ruby, Docker)"]
     direction TB
     RX[Webhook receiver<br/>HMAC verify, event filter]
@@ -27,14 +23,12 @@ flowchart LR
     TRK --> DB
     DB --> UI
   end
-
-  subgraph devin["Devin (Cognition)"]
+  subgraph devin["Devin"]
     direction TB
     API[Devin API v3]
     VM[Devin session<br/>bump pin, verify, open PR<br/>emit structured output]
     API --> VM
   end
-
   SCAN[bin/scan<br/>pip-audit → issues] -- files labeled issue --> ISS
   ENG([Engineer applies label]) --> ISS
   ISS -- webhook via smee.io --> RX
@@ -42,48 +36,24 @@ flowchart LR
   TRK <-- poll GET /sessions/:id --> API
   VM -- opens PR --> PR
   TRK -- comment: PR link + status --> ISS
-  REV([Cognition reviewer<br/>localhost:4567]) --> UI
-  VP([VP / senior ICs<br/>Phase 2: Slack + static report]) -.-> UI
+  REV([Reviewer<br/>localhost:4567]) --> UI
 ```
 
-## Data flows, in order of a single remediation
+## Data flow
 
-1. **Detection → issue.** `bin/scan` (deterministic) or a human files/labels
-   an issue on the fork. The issue body carries a fenced `yaml` finding
-   block: `package, pinned, fix_version, advisories[], severity, source`.
-   The due date is computed by the service (issue `created_at` + the
-   `SECURITY-SLA.md` window), not carried in the block.
-2. **GitHub → service.** GitHub POSTs the `issues` event to the smee channel;
-   the smee client forwards it to `POST /webhooks/github`. The receiver
-   verifies `X-Hub-Signature-256`, accepts `opened`-with-label or `labeled`
-   (start) and `closed` on a tracked issue (remediated), ignores everything
-   else.
-3. **Service → DB.** Triage parses the finding block, computes the SLA
-   deadline from `SECURITY-SLA.md`'s windows, and inserts a `finding` row.
-   Uniqueness on issue number makes duplicate deliveries a no-op.
-4. **Service → Devin.** The dispatcher renders the prompt template with the
-   finding, then `POST /v3/organizations/{org}/sessions` with `prompt`,
-   `repos`, `tags`, `title`, `resumable: false`, `max_acu_limit`,
-   `structured_output_schema`. It stores `session_id`, `url`, `status`.
-5. **Devin → GitHub.** The session bumps the pin, verifies with pip-audit,
-   opens a PR on the fork referencing the issue, and records its structured
-   output.
-6. **Service ← Devin.** The tracker polls each open session every 15 s,
-   records `status`, `status_detail`, `pull_requests[]`, `acus_consumed`,
-   `structured_output` (validated against the schema once, at this
-   boundary). Terminal: `exit`/`error`; `suspended`+`inactivity` = stalled.
-7. **Service → GitHub.** On first PR detection the Notifier comments on the
-   issue with the PR link and session summary. (Phase 2: also Slack.)
-8. **DB → humans.** The status page lists findings with SLA due, session
-   state, PR link, ACUs consumed, time-to-PR.
+1. `bin/scan` or an engineer files a labelled issue with a finding block.
+2. smee forwards the signed GitHub webhook to `POST /webhooks/github`.
+3. Triage parses the finding, calculates its due date, and stores it once.
+4. The dispatcher renders `prompts/` and creates a Devin session with `schemas/`.
+5. Devin upgrades the pin, checks it, opens a pull request, and reports its result.
+6. The tracker polls Devin, validates the result, and records session and pull-request state.
+7. The tracker comments on the issue when it first sees the pull request.
+8. The status page reads SQLite and shows each finding's SLA state.
 
-## Boundaries and seams
+## Boundaries
 
-- `DevinClient` and `GitHubClient` are the only places that know HTTP; both
-  are tested against recorded fixtures from the step-3 spike.
-- `Notifier` is an interface with `IssueCommentNotifier` now and
-  `SlackNotifier` in Phase 2.
-- `Finding` owns SLA math and finding-block parsing; nothing else parses
-  issue bodies.
-- The prompt template and the structured-output schema live as files
-  (`prompts/`, `schemas/`) — reviewable artifacts, not string literals.
+- Only `DevinClient` and `GitHubClient` know HTTP; both are tested against recorded fixtures.
+- `Policy` owns SLA date math; `FindingBlock` owns finding-block parsing, and nothing else parses issue bodies.
+- The prompt template and structured-output schema are files under `prompts/` and `schemas/`, reviewable instead of string literals.
+
+[Behavioural specifications](spec/README.md) define each slice's promises.
