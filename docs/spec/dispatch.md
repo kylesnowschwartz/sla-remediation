@@ -1,178 +1,97 @@
 # Dispatch
 
-A finding becomes work for Devin exactly once. The dispatcher renders the
-remediation prompt, asks Devin for a session, and records it, refusing to
-start a second session for a finding that already has one, a fix branch, or
-a fix pull request.
+A finding becomes work for Devin exactly once: never a second session when a session, a fix branch, or a fix pull request already exists.
 
 ## Deciding whether to dispatch
 
-**DISP-01** IF the finding has no fix version, THEN THE dispatcher SHALL
-return `not_fixable` and call neither GitHub nor Devin.
-Proof: test/dispatcher_test.rb test_finding_without_a_fix_version_is_not_fixable
-
-**DISP-02** IF no findings row has the issue number, THEN THE dispatcher
-SHALL return `not_found` and call neither GitHub nor Devin.
-Proof: test/dispatcher_test.rb test_unknown_issue_is_not_found
-
-**DISP-03** IF the target repository has an open pull request from branch
-`fix/<package>-sla-<issue_number>`, or that branch exists, THEN THE
-dispatcher SHALL return `already_dispatched`, print why, and create no
-session.
-Proof: test/dispatcher_test.rb test_open_fix_pull_request_is_already_dispatched_without_a_post,
-test_existing_fix_branch_is_already_dispatched_without_a_post
-
-**DISP-04** IF GitHub answers the branch or pull-request check with an error
-other than "not found", THEN THE dispatcher SHALL fail with that error and
-create no session.
-Proof: test/dispatcher_test.rb test_github_errors_other_than_404_propagate_without_a_post
-
-**DISP-05** IF the findings row lacks the issue title or URL, THEN THE
-dispatcher SHALL fetch them from GitHub and store them on the row before
-rendering the prompt; when both are present it SHALL not ask GitHub.
-Proof: test/dispatcher_test.rb test_missing_issue_details_are_fetched_from_github_and_stored,
-test_present_issue_details_are_not_fetched
+- **DISP-01** No fix version → `not_fixable`; no GitHub or Devin call.
+- **DISP-02** No findings row for the issue number → `not_found`; no GitHub or Devin call.
+- **DISP-03** Branch `fix/<package>-sla-<issue_number>` or an open PR from it → `already_dispatched`, why printed.
+- **DISP-04** A branch or PR check error other than not-found → fail with it, no session.
+- **DISP-05** Missing issue title/URL fetched from GitHub and stored before rendering; present ones aren't.
 
 ## Creating the session
 
-**DISP-06** WHEN dispatching, THE dispatcher SHALL create one Devin session
-with the rendered prompt, the issue title as the session title, the target
-repository as its only repository, tags `sla-remediation` and
-`issue-<issue_number>`, the remediation result schema as its structured
-output schema, an ACU limit of 3, and `resumable` true (so the tracker can
-message the session about its pull request after it has gone idle; see
-docs/spec/track.md TRACK-28).
-Proof: test/dispatcher_test.rb test_dispatch_creates_one_session_and_records_it;
-test/devin_client_test.rb test_create_session_posts_the_recorded_request_body
-
-**DISP-07** WHEN the session is created, THE dispatcher SHALL record one
-sessions row for the finding holding the Devin session id, status, status
-detail, start time, and last-polled time, print the session URL, and return
-`dispatched`.
-Proof: test/dispatcher_test.rb test_dispatch_creates_one_session_and_records_it
-
-**DISP-08** THE dispatcher SHALL hold at most one sessions row per finding;
-dispatching a finding that has one SHALL return `already_dispatched` and
-not call Devin.
-Proof: test/dispatcher_test.rb test_two_dispatches_of_the_same_finding_post_once
-
-**DISP-09** THE dispatcher SHALL reserve the sessions row before calling
-Devin, so that two dispatches racing for one finding result in one Devin
-call; the loser SHALL return `already_dispatched`.
-Proof: test/dispatcher_test.rb test_the_sessions_row_is_reserved_before_devin_is_called,
-test_losing_the_reservation_race_is_already_dispatched_without_a_post
-
-**DISP-10** IF Devin refuses or fails to create the session, THEN THE
-dispatcher SHALL remove the reservation, leave the findings row in place,
-and fail with the Devin error, so a later dispatch can succeed.
-Proof: test/dispatcher_test.rb test_a_failed_devin_call_releases_the_reservation_and_raises
-
-## Preview
-
-**DISP-11** WHEN asked to preview, THE dispatcher SHALL print the rendered
-prompt and the session request as JSON, create no session, write no
-sessions row, and still store missing issue details as in DISP-05.
-Proof: test/dispatcher_test.rb test_preview_prints_the_prompt_and_payload_without_posting,
-test_preview_fetches_missing_issue_details_and_stores_them
-
-**DISP-12** WHEN asked to preview an unfixable or unknown finding, THE
-dispatcher SHALL return `not_fixable` or `not_found` and print nothing.
-Proof: test/dispatcher_test.rb test_preview_of_an_unfixable_or_unknown_issue
+- **DISP-06** Dispatch creates exactly one Devin session:
+  - rendered prompt, issue title as session title, target repository as its only repository
+  - tags `sla-remediation` and `issue-<issue_number>`
+  - remediation result schema as structured output, ACU limit 3, `resumable` true (so the tracker can message it later, TRACK-28)
+- **DISP-07** Writes a sessions row (id, status, detail, start, last poll), prints URL, returns `dispatched`.
+- **DISP-08** At most one sessions row per finding; a second dispatch → `already_dispatched`, no Devin call.
+- **DISP-09** Row reserved before the Devin call: a race makes one call, the loser `already_dispatched`.
+- **DISP-10** Devin failing → reservation released, findings row kept, error raised; a retry can succeed.
+- **DISP-11** Preview prints prompt and request JSON, writes no session or row, still stores DISP-05 details.
+- **DISP-12** Preview of an unfixable or unknown finding → `not_fixable`/`not_found`, nothing printed.
 
 ## The prompt and the schema
 
-**DISP-13** THE rendered prompt SHALL name the target repository, the issue
-number, title, and URL, the package, pinned version, advisories, fix
-version, and severity, the due date in UTC as `YYYY-MM-DD HH:MM UTC`, the
-branch `fix/<package>-sla-<issue_number>`, and instruct the pull request to
-say `Fixes #<issue_number>`; it SHALL contain no unrendered template tags.
-Proof: test/remediation_prompt_test.rb test_render_names_the_finding_and_the_rules,
-test_render_formats_due_at_in_utc, test_render_leaves_no_erb_tags
-
-**DISP-14** THE structured output schema SHALL be valid JSON Schema
-draft-07, accept a complete remediation result, reject an unknown
-`lockfile_route`, a missing `pr_url`, or an incomplete `verification`, and
-be smaller than 64 KB.
-Proof: test/remediation_prompt_test.rb test_schema_is_valid_draft_07_and_accepts_a_remediation_result,
-test_schema_fits_the_session_request_limit
-
-**DISP-23** WHEN the fix version's leading integer differs from the pinned
-version's, THE rendered prompt SHALL instruct Devin to update the pin to the
-lowest release of the new major series that clears the advisories, allow
-minimal source and test changes the upgrade needs with each explained in the
-PR description, require running the affected tests with `pytest` and, if the
-suite cannot run in Devin's environment, saying so in the pull request and
-relying on CI rather than skipping the change, forbid dependency changes
-beyond the package and any the new major strictly requires, and ask the
-structured output to name every changed source or test file with its reason
-and the test commands run; otherwise it SHALL keep the same-major-series
-instructions and structured-output request unchanged, byte-identical to the
-prompt rendered before the major-version path existed.
-Proof: test/remediation_prompt_test.rb test_render_of_a_same_major_finding_has_the_same_major_language,
-test_render_of_a_same_major_finding_is_byte_identical_to_the_pre_major_path_prompt,
-test_render_of_a_major_version_finding_has_the_major_path_language,
-test_render_of_a_major_version_finding_asks_for_breaking_changes_and_tests_run_in_the_close,
-test_render_of_a_same_major_finding_does_not_ask_for_breaking_changes_or_tests_run
-
-**DISP-24** THE structured output schema SHALL accept an optional
-`breaking_changes` array of `{file, reason}` objects and an optional
-`tests_run` array of strings, without requiring either.
-Proof: test/remediation_prompt_test.rb test_schema_accepts_breaking_changes_and_tests_run,
-test_schema_accepts_output_without_breaking_changes_or_tests_run
+- **DISP-13** The rendered prompt names the whole finding and leaves no unrendered template tags:
+  - target repository, issue number, title, URL
+  - package, pinned version, advisories, fix version, severity
+  - due date in UTC as `YYYY-MM-DD HH:MM UTC`, branch `fix/<package>-sla-<issue_number>`
+  - the instruction that the pull request say `Fixes #<issue_number>`
+- **DISP-14** The structured output schema is valid JSON Schema draft-07 and smaller than 64 KB:
+  - accepts a complete remediation result
+  - rejects an unknown `lockfile_route`, a missing `pr_url`, or an incomplete `verification`
+- **DISP-23** A fix version in a new major series switches the prompt to major-upgrade wording:
+  - pin the lowest release of the new major series that clears the advisories
+  - allow the minimal source and test changes the upgrade needs, each explained in the PR description
+  - run the affected tests with `pytest`; if the suite cannot run in Devin, say so in the pull request and rely on CI rather than skip the change
+  - no dependency changes beyond the package and what the new major strictly requires
+  - structured output names every changed source or test file with its reason, plus the test commands run
+  - a same-major fix version keeps the same-major instructions and output request, byte-identical to the baseline prompt
+- **DISP-24** The schema accepts optional `breaking_changes` (`{file, reason}`) and `tests_run` (strings).
 
 ## Automatic dispatch from the webhook
 
-**DISP-15** WHILE `SLA_AUTO_DISPATCH` is `true`, WHEN the receiver starts a
-finding, THE service SHALL dispatch it in the same delivery and log the
-dispatch result on the delivery line; a duplicate delivery SHALL not call
-Devin again.
-Proof: test/webhook_test.rb test_opened_with_auto_dispatch_starts_one_session
+- **DISP-15** While `SLA_AUTO_DISPATCH` is `true`, a finding the receiver starts is dispatched:
+  - in the same delivery, with the result logged on the delivery line
+  - a duplicate delivery does not call Devin again
+- **DISP-16** While `SLA_AUTO_DISPATCH` is not `true`, findings are recorded only, logged `dispatch=off`.
+- **DISP-17** Failed automatic dispatch: findings row kept, no session, error logged, no retry.
+- **DISP-18** DISP-01 and DISP-03 apply to automatic dispatch, logged `not_fixable` or `already_dispatched`.
 
-**DISP-16** WHILE `SLA_AUTO_DISPATCH` is not `true`, THE service SHALL only
-record findings and log `dispatch=off`.
-Proof: test/webhook_test.rb test_opened_without_auto_dispatch_records_only_the_finding
+## Devin client and command
 
-**DISP-17** IF an automatic dispatch fails, THEN THE service SHALL keep the
-findings row, create no session, log the error on the delivery line, and
-not retry on its own.
-Proof: test/webhook_test.rb test_auto_dispatch_failure_keeps_the_finding_and_logs_the_error
-
-**DISP-18** THE automatic dispatch SHALL apply DISP-01 and DISP-03 the same
-way as a manual one, logging `not_fixable` or `already_dispatched`.
-Proof: test/webhook_test.rb test_auto_dispatch_of_an_unfixable_finding_creates_nothing,
-test_auto_dispatch_skips_a_finding_whose_fix_branch_exists
-
-## Devin client
-
-**DISP-19** THE Devin client SHALL treat any non-2xx response as an error
-carrying the HTTP status and parsed body.
-Proof: test/devin_client_test.rb test_not_found_raises_devin_api_error
-
-**DISP-20** THE Devin client SHALL list the organisation's repositories from
-the `v3beta1` repositories endpoint.
-Proof: test/devin_client_test.rb test_list_repositories_uses_v3beta1_and_maps_structs
-
-## Command
-
-**DISP-21** `bin/dispatch <issue_number>` SHALL dispatch one finding and
-exit 0 for `dispatched` or `already_dispatched` and 1 otherwise;
-`--dry-run` SHALL preview instead and exit 0.
-Proof: unproven
-
-**DISP-22** IF `DEVIN_SERVICE_API_KEY_V3`, `DEVIN_ORG_ID`, or `SLA_REPO` is
-unset, THEN `bin/dispatch` SHALL name the missing variables and exit 1
-without dispatching.
-Proof: unproven
-
-## Unproven
-
-DISP-21, DISP-22. The command-line entry point has no tests.
+- **DISP-19** Any non-2xx response is an error carrying the HTTP status and the parsed body.
+- **DISP-20** Organisation repositories are listed from the `v3beta1` repositories endpoint.
+- **DISP-21** `bin/dispatch <issue_number>` dispatches one finding:
+  - exit 0 for `dispatched` or `already_dispatched`, 1 otherwise
+  - `--dry-run` previews instead and exits 0
+- **DISP-22** `DEVIN_SERVICE_API_KEY_V3`, `DEVIN_ORG_ID`, or `SLA_REPO` unset → named, exit 1, no dispatch.
 
 ## Not specified
 
 - The prose of the prompt beyond the facts DISP-13 names.
 - The wording of printed lines.
-- Message sending and reading on a session; the client supports both but no
-  slice uses them.
-- What Devin does with the session; the service's promise ends at creating
-  it.
+- Reading messages on a session; the client supports it, no slice uses it. Sending is the tracker's (TRACK-28).
+- What Devin does with the session; the promise ends at creating it.
+
+<details><summary>Proofs</summary>
+
+- DISP-01: `test/dispatcher_test.rb` test_finding_without_a_fix_version_is_not_fixable
+- DISP-02: `test/dispatcher_test.rb` test_unknown_issue_is_not_found
+- DISP-03: `test/dispatcher_test.rb` test_open_fix_pull_request_is_already_dispatched_without_a_post, test_existing_fix_branch_is_already_dispatched_without_a_post
+- DISP-04: `test/dispatcher_test.rb` test_github_errors_other_than_404_propagate_without_a_post
+- DISP-05: `test/dispatcher_test.rb` test_missing_issue_details_are_fetched_from_github_and_stored, test_present_issue_details_are_not_fetched
+- DISP-06: `test/dispatcher_test.rb` test_dispatch_creates_one_session_and_records_it; `test/devin_client_test.rb` test_create_session_posts_the_recorded_request_body
+- DISP-07: `test/dispatcher_test.rb` test_dispatch_creates_one_session_and_records_it
+- DISP-08: `test/dispatcher_test.rb` test_two_dispatches_of_the_same_finding_post_once
+- DISP-09: `test/dispatcher_test.rb` test_the_sessions_row_is_reserved_before_devin_is_called, test_losing_the_reservation_race_is_already_dispatched_without_a_post
+- DISP-10: `test/dispatcher_test.rb` test_a_failed_devin_call_releases_the_reservation_and_raises
+- DISP-11: `test/dispatcher_test.rb` test_preview_prints_the_prompt_and_payload_without_posting, test_preview_fetches_missing_issue_details_and_stores_them
+- DISP-12: `test/dispatcher_test.rb` test_preview_of_an_unfixable_or_unknown_issue
+- DISP-13: `test/remediation_prompt_test.rb` test_render_names_the_finding_and_the_rules, test_render_formats_due_at_in_utc, test_render_leaves_no_erb_tags
+- DISP-14: `test/remediation_prompt_test.rb` test_schema_is_valid_draft_07_and_accepts_a_remediation_result, test_schema_fits_the_session_request_limit
+- DISP-23: `test/remediation_prompt_test.rb` test_render_of_a_same_major_finding_has_the_same_major_language, test_render_of_a_same_major_finding_is_byte_identical_to_the_pre_major_path_prompt, test_render_of_a_major_version_finding_has_the_major_path_language, test_render_of_a_major_version_finding_asks_for_breaking_changes_and_tests_run_in_the_close, test_render_of_a_same_major_finding_does_not_ask_for_breaking_changes_or_tests_run
+- DISP-24: `test/remediation_prompt_test.rb` test_schema_accepts_breaking_changes_and_tests_run, test_schema_accepts_output_without_breaking_changes_or_tests_run
+- DISP-15: `test/webhook_test.rb` test_opened_with_auto_dispatch_starts_one_session
+- DISP-16: `test/webhook_test.rb` test_opened_without_auto_dispatch_records_only_the_finding
+- DISP-17: `test/webhook_test.rb` test_auto_dispatch_failure_keeps_the_finding_and_logs_the_error
+- DISP-18: `test/webhook_test.rb` test_auto_dispatch_of_an_unfixable_finding_creates_nothing, test_auto_dispatch_skips_a_finding_whose_fix_branch_exists
+- DISP-19: `test/devin_client_test.rb` test_not_found_raises_devin_api_error
+- DISP-20: `test/devin_client_test.rb` test_list_repositories_uses_v3beta1_and_maps_structs
+- DISP-21: unproven (the wiring in `bin/dispatch` has no tests)
+- DISP-22: unproven (the wiring in `bin/dispatch` has no tests)
+
+</details>
