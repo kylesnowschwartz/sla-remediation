@@ -84,14 +84,13 @@ module SLA
       assert_equal({ 'ok' => true }, session.structured_output)
     end
 
-    def test_waiting_for_user_with_output_is_settled
+    def test_waiting_for_user_with_output_is_reported
       stub_fixture(:get, "#{BASE}/sessions/a", 'get_session_waiting_for_user.json')
 
       session = @client.session('a')
 
       assert_predicate session, :stopped?
       assert_predicate session, :reported?
-      assert_predicate session, :settled?
       refute_predicate session, :stalled?
     end
 
@@ -112,7 +111,7 @@ module SLA
                                          'structured_output' => 'null', 'pull_requests' => [])
 
       assert_predicate session, :stalled?
-      refute_predicate session, :settled?
+      refute_predicate session, :reported?
     end
 
     def test_running_session_is_not_stopped

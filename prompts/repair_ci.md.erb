@@ -1,0 +1,29 @@
+The checks on your pull request <%= pr_url %> (branch `<%= branch %>`)
+are failing at commit <%= sha %>. The failed jobs are:
+
+<% failures.each do |failure| -%>
+- `<%= failure.name %>` — <%= failure.details_url %>
+<% if failure.output -%>
+
+  ```
+<% failure.output.each_line do |line| -%>
+  <%= line.chomp %>
+<% end -%>
+  ```
+<% end -%>
+<% end -%>
+
+Fix these failures:
+
+1. Work on the same branch, `<%= branch %>`, and push your fix to it; the
+   checks will run again on the new commit. Do not open a new pull request,
+   and never touch `apache/superset`.
+2. Keep the change limited to what the failures require. Do not change
+   dependencies, source, or tests beyond what is needed to make these jobs
+   pass.
+3. Explain each change, and why the failure required it, in a comment on
+   the pull request.
+4. When the fix is pushed, provide your final structured output again in
+   the same shape as before, with `breaking_changes` listing every source or
+   test file you changed with the reason, and `tests_run` listing the test
+   commands you ran.

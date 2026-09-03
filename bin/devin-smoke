@@ -25,5 +25,5 @@ session = client.session(SESSION_ID)
 puts "Session #{session.session_id}:"
 puts "  status:                 #{session.status}"
 puts "  status_detail:          #{session.status_detail.inspect}"
-puts "  settled?:               #{session.settled?}"
+puts "  reported?:              #{session.reported?}"
 puts "  structured_output keys: #{session.structured_output&.keys.inspect}"
