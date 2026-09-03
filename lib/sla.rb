@@ -17,6 +17,7 @@ require_relative 'sla/notifier'
 require_relative 'sla/tracker'
 require_relative 'sla/status_page'
 require_relative 'sla/demo_reset'
+require_relative 'sla/demo_fixture'
 require_relative 'sla/db'
 require_relative 'sla/app'
 

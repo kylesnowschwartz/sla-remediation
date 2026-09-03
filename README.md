@@ -107,38 +107,44 @@ The data flows, in the order of a single remediation:
 The actors and their boundaries are described further in
 [docs/architecture.md](docs/architecture.md).
 
+## Try it without credentials
+
+The status page can be filled from a captured run, with no GitHub token,
+webhook secret, or Devin key. With Docker and the Compose plugin installed:
+
+```sh
+docker compose up app --build --detach --wait
+docker compose run --rm app bin/demo-load
+```
+
+then open http://localhost:4567. What you are looking at is the status page
+from a real run against the demo fork, `kylesnowschwartz/superset`, with
+every timestamp shifted so the run ends at the moment you loaded it: a
+major-version upgrade, two pin bumps, and one finding with no fixed release
+that stays waiting with its clock running. The intervals between events are
+the ones the run had, so every SLA word is the one the run earned, and the
+page ages from here at the same rate a live run would. Expand a row to see
+the session's report and the state of the pull request's checks. Scanning and
+dispatching are not exercised in this mode: nothing is read from GitHub and
+no Devin session is started. The first command starts only the web server;
+the loaded sessions are already closed, so a tracker would have nothing to
+poll and is left out. To run the whole loop, see
+[Run it against your own fork](#run-it-against-your-own-fork).
+
+`bin/demo-load` refuses to write into a database that already has findings
+or sessions; `bin/demo-load --replace` empties both tables first. The fixture
+is `db/fixtures/demo.json`, written by `bin/demo-export` from a live
+database; nothing in it is secret.
+
 ## Run with Docker
 
-You need:
-
-- Docker with the Compose plugin (`docker compose version` prints a version).
-- A GitHub fork to point the service at. The demo uses
-  `kylesnowschwartz/superset`; any fork with a `SECURITY-SLA.md` at its root
-  and a `requirements/base.txt` works.
-- A Devin API v3 *service* key and the Devin organization ID. Only a service
-  key works for the v3 API; a personal key does not. In the Devin web app,
-  open the organization settings, create a service user, and create an API
-  key for it. The organization ID is the `org-...` value in the same
-  settings page.
-- A GitHub token with write access to contents, issues, and pull requests on
-  the fork. A fine-grained personal access token scoped to the one repository
-  is enough. The service reads `SECURITY-SLA.md` from the fork on the first
-  webhook delivery; without a token that read counts against GitHub's small
-  anonymous rate limit and can fail on a shared network.
-- A smee channel, so that GitHub can deliver webhooks to a machine without a
-  public address. Create one and read its URL from the `Location` header:
-
-  ```sh
-  curl -sI https://smee.io/new | grep -i location
-  ```
-
-  Then, on the fork, open Settings → Webhooks → Add webhook and set the
-  payload URL to that smee URL, the content type to `application/json`, the
-  secret to a random string you keep as `SLA_WEBHOOK_SECRET`, and the events
-  to "Issues" only.
-
-Export the variables in the shell that will run Docker Compose, or copy
-`.env.example` to `.env` and fill it in (`.env` is ignored by git):
+You need Docker with the Compose plugin (`docker compose version` prints a
+version) and a value for each variable in `.env.example`: the fork to point
+the service at, a GitHub token for it, the webhook secret, a Devin service
+key and organization ID, and the smee channel URL. The next section says
+where each one comes from. Copy `.env.example` to `.env` and fill it in;
+Compose reads `.env` both for the containers' environment and for the
+`${SMEE_URL}` in the compose file (`.env` is ignored by git):
 
 ```sh
 cp .env.example .env
@@ -165,6 +171,52 @@ docker compose run --rm app bin/dispatch <issue_number>
 The database is a SQLite file on the named volume `sla-db`, shared by the web
 server and the tracker. `docker compose down -v` deletes it.
 
+## Run it against your own fork
+
+With a Devin service key, the whole loop runs against a fork of your own:
+the scanner files issues on it, Devin opens pull requests on it, and the
+status page follows them.
+
+1. Fork `kylesnowschwartz/superset`, not `apache/superset`, so that
+   `SECURITY-SLA.md`, the `sla-remediation` and `policy` labels, and the
+   seeded pins in `requirements/base.txt` come along. Nothing is ever opened
+   against `apache/superset`.
+2. Create a fine-grained GitHub personal access token scoped to the new fork
+   with read and write access to contents, issues, and pull requests. This is
+   `SLA_GITHUB_TOKEN`. The service reads `SECURITY-SLA.md` from the fork on
+   the first webhook delivery; without a token that read counts against
+   GitHub's small anonymous rate limit and can fail on a shared network.
+3. Get a Devin API v3 *service* key and the Devin organization ID. Only a
+   service key works for the v3 API; a personal key does not. In the Devin
+   web app, open the organization settings, create a service user, and create
+   an API key for it. The organization ID is the `org-...` value in the same
+   settings page. These are `DEVIN_SERVICE_API_KEY_V3` and `DEVIN_ORG_ID`.
+4. Create a smee channel, so that GitHub can deliver webhooks to a machine
+   without a public address, and read its URL from the `Location` header:
+
+   ```sh
+   curl -sI https://smee.io/new | grep -i location
+   ```
+
+   This is `SMEE_URL`. Then, on the fork, open Settings → Webhooks → Add
+   webhook and set the payload URL to that smee URL, the content type to
+   `application/json`, the secret to a random string you keep as
+   `SLA_WEBHOOK_SECRET`, and the events to "Issues" only.
+5. Set `SLA_REPO` to the new fork's `owner/name` in `.env`, along with the
+   values above, and `SLA_AUTO_DISPATCH=true` if a labelled issue should start
+   a Devin session on its own.
+6. Start the services, put the fork in its starting state, and scan it:
+
+   ```sh
+   docker compose up --build --detach --wait
+   docker compose run --rm app bin/demo-reset
+   docker compose run --rm app bin/scan
+   ```
+
+The scan files one issue per vulnerable pin, the webhook reaches the service
+through smee, each finding starts a Devin session, and http://localhost:4567
+follows the pull requests as they open and their checks run.
+
 ## Run locally without Docker
 
 With Ruby 3.3 installed (`.ruby-version` names the exact patch release for version managers such as rbenv, which reject a bare minor version; any 3.3.x satisfies the `Gemfile`):
@@ -190,8 +242,7 @@ npx --yes smee-client --url "$SMEE_URL" --target http://localhost:4567/webhooks/
 
 ## Configuration
 
-Read from the shell or `.env`; the repository's own `.envrc` loads them
-through direnv:
+Read from the shell or `.env`:
 
 - `DEVIN_SERVICE_API_KEY_V3` — Devin API v3 service-user key used to create and poll sessions.
 - `SLA_GITHUB_TOKEN` — GitHub token for reading issues and commenting on them in the target repo.
@@ -272,6 +323,10 @@ A fresh demo run is the reset followed by the scan:
 ```sh
 bin/demo-reset && bin/scan
 ```
+
+After a good run, before the reset, `bin/demo-export` writes the findings and
+sessions to `db/fixtures/demo.json`, the fixture that `bin/demo-load` shows
+to a reader without credentials.
 
 ## In production
 

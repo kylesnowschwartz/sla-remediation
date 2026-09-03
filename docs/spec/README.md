@@ -20,6 +20,7 @@ One file per slice, in the order data flows through the system:
 | [track.md](track.md) | Track | polling sessions, recording results, commenting the pull request on the issue |
 | [status-page.md](status-page.md) | Status page | the counts, the SLA word for each finding, and what each cell shows |
 | [demo-reset.md](demo-reset.md) | Demo reset | returning the target repository and the database to the state before a run |
+| [demo-fixture.md](demo-fixture.md) | Demo fixture | capturing a run's findings and sessions to a file and loading them back, shifted to the present |
 
 ## Notation
 
