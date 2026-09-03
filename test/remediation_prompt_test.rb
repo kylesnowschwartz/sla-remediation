@@ -44,6 +44,32 @@ module SLA
       assert_includes prompt, 'Reference the issue with "Fixes #4".'
     end
 
+    def test_render_of_a_same_major_finding_has_the_same_major_language
+      prompt = RemediationPrompt.render(FINDING_ROW, repo: REPO)
+
+      assert_includes prompt, 'preferring the'
+      assert_includes prompt, 'same major series'
+      assert_includes prompt, 'Do not modify any other dependencies or source files.'
+      refute_includes prompt, 'lowest non-vulnerable release of the new major version'
+      refute_includes prompt, 'pytest <paths>'
+    end
+
+    def test_render_of_a_major_version_finding_has_the_major_path_language
+      row = FINDING_ROW.merge(pinned: '2.3.3', fix_version: '3.1.3')
+      prompt = RemediationPrompt.render(row, repo: REPO)
+
+      assert_includes prompt, 'lowest non-vulnerable release of the new major version'
+      assert_includes prompt, 'not just any'
+      assert_includes prompt, 'new major series'
+      assert_includes prompt, 'minimal changes to'
+      assert_includes prompt, 'keep such changes to'
+      assert_includes prompt, 'pytest <paths>'
+      assert_includes prompt, 'Make no dependency changes other than'
+      assert_includes prompt, 'Make no source changes beyond what the'
+      assert_includes prompt, 'upgrade breaks.'
+      refute_includes prompt, 'Do not modify any other dependencies or source files.'
+    end
+
     def test_render_leaves_no_erb_tags
       prompt = RemediationPrompt.render(FINDING_ROW, repo: REPO)
 
@@ -75,6 +101,22 @@ module SLA
       refute schemer.valid?(SAMPLE_OUTPUT.merge('lockfile_route' => 'guess'))
       refute schemer.valid?(SAMPLE_OUTPUT.except('pr_url'))
       refute schemer.valid?(SAMPLE_OUTPUT.merge('verification' => { 'tool' => 'pip-audit' }))
+    end
+
+    def test_schema_accepts_breaking_changes_and_tests_run
+      schemer = JSONSchemer.schema(RemediationPrompt.schema)
+      output = SAMPLE_OUTPUT.merge(
+        'breaking_changes' => [{ 'file' => 'superset/views/base.py', 'reason' => 'renamed keyword argument' }],
+        'tests_run' => ['pytest tests/unit_tests/views/test_base.py']
+      )
+
+      assert_empty schemer.validate(output).to_a
+    end
+
+    def test_schema_accepts_output_without_breaking_changes_or_tests_run
+      schemer = JSONSchemer.schema(RemediationPrompt.schema)
+
+      assert_empty schemer.validate(SAMPLE_OUTPUT).to_a
     end
 
     def test_schema_fits_the_session_request_limit

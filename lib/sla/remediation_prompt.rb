@@ -11,7 +11,13 @@ module SLA
     SCHEMA_PATH = File.expand_path('../../schemas/remediation_result.json', __dir__)
     DUE_AT_FORMAT = '%Y-%m-%d %H:%M UTC'
 
-    Finding = Struct.new(:package, :pinned, :fix_version, :advisories, :severity, keyword_init: true)
+    Finding = Struct.new(:package, :pinned, :fix_version, :advisories, :severity, keyword_init: true) do
+      # Whether the fix crosses a major version boundary, comparing the
+      # leading integer of the pinned and fix versions.
+      def major_version_bump?
+        pinned[/\A\d+/].to_i != fix_version[/\A\d+/].to_i
+      end
+    end
     Issue = Struct.new(:number, :title, :url, keyword_init: true)
 
     def self.render(finding_row, repo:)

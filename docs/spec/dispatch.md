@@ -94,6 +94,22 @@ be smaller than 64 KB.
 Proof: test/remediation_prompt_test.rb test_schema_is_valid_draft_07_and_accepts_a_remediation_result,
 test_schema_fits_the_session_request_limit
 
+**DISP-23** WHEN the fix version's leading integer differs from the pinned
+version's, THE rendered prompt SHALL instruct Devin to target the lowest
+non-vulnerable release of the new major version, allow minimal source and
+test changes the upgrade needs with each explained in the PR description,
+require running the affected tests with `pytest`, and forbid dependency
+changes beyond the package and any the new major strictly requires;
+otherwise it SHALL keep the same-major-series instructions unchanged.
+Proof: test/remediation_prompt_test.rb test_render_of_a_same_major_finding_has_the_same_major_language,
+test_render_of_a_major_version_finding_has_the_major_path_language
+
+**DISP-24** THE structured output schema SHALL accept an optional
+`breaking_changes` array of `{file, reason}` objects and an optional
+`tests_run` array of strings, without requiring either.
+Proof: test/remediation_prompt_test.rb test_schema_accepts_breaking_changes_and_tests_run,
+test_schema_accepts_output_without_breaking_changes_or_tests_run
+
 ## Automatic dispatch from the webhook
 
 **DISP-15** WHILE `SLA_AUTO_DISPATCH` is `true`, WHEN the receiver starts a
