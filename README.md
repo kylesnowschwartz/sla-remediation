@@ -240,24 +240,26 @@ Findings with no fix version (`fix_version: null` in the finding block) are neve
 
 The tracker (`SLA::Tracker`, `lib/sla/tracker.rb`) is a separate process from the web server: `bin/track --loop` polls every open session every 15 s, and `docker compose` runs it as its own service. It needs `DEVIN_SERVICE_API_KEY_V3` and `DEVIN_ORG_ID`; `bin/track` without `--loop` runs one round and prints the summary (`polled= settled= stalled= notified= errors=`).
 Each round records `status`, `status_detail`, `acus_consumed`, the first pull request's URL and state, and the structured output on the `sessions` row, and logs one line when a session's status changes.
-A session is judged `settled` once it has stopped working (status `exit` or `error`, or status detail `waiting_for_user`, `finished`, or `inactivity`) with a structured output or a pull request, and `stalled` once it has stopped with neither; either outcome closes the row and it is never fetched again.
+A session is judged `settled` once it has stopped working (status `exit` or `error`, or status detail `waiting_for_user`, `finished`, or `inactivity`) with a structured output or a pull request, and `stalled` once it has stopped with neither; either outcome closes the row and it is never fetched from Devin again.
+Each round also reads the pull request's check runs and merge state from GitHub and records `pr_checks` (`pending`, `failure`, `success`, or `none`), when that state was first observed, and `pr_merged_at`. A closed row keeps having its pull request checked until the pull request is green, merged, or closed, so a finding is judged by whether its fix passed CI, not by whether a session finished.
 The first time a row has a pull request the notifier comments on the finding's issue (pull request link, session link, due date and whether it is inside or past the SLA window); `pr_notified_at` is written before the comment is posted and cleared if posting fails, so the comment is posted exactly once.
 The comment needs `SLA_GITHUB_TOKEN`; without it the `Null` notifier is used and nothing is posted.
 A structured output that does not match `schemas/remediation_result.json` is kept as JSON text in `structured_output_invalid` with a logged warning naming the first problem; nothing is discarded.
 
 ## Status page
 
-`GET /` (http://localhost:4567/ locally) is a dense, monospaced, terminal-style page that reloads itself every 15 s: four counts (findings tracked, pull requests open, findings inside their SLA window, findings that have breached it) and one row per finding, sorted by severity and then by due date, with the issue, package and versions, severity, the due date, the SLA word, what the Devin session is doing, and the pull request. A checkbox-and-label toggle next to each row expands a second, CSS-only detail row underneath it with the finding's title, filed time, advisories, source, session status, start time, time to PR, ACUs, and lockfile verification.
-`SLA::StatusPage` (`lib/sla/status_page.rb`) reads findings left-joined to sessions and decides everything; `views/status.html.erb` only prints it. The SLA word is decided in this order:
+`GET /` (http://localhost:4567/ locally) is a dense, monospaced, terminal-style page that reloads itself every 15 s. One summary line answers the leader's question: findings tracked, findings fixed inside their SLA window, findings that have breached it, and the median time from session start to a green pull request. Below it is one row per finding, sorted by severity and then by due date, with the issue, package and versions, severity, the due date, the SLA word, what the Devin session is doing, and the pull request. A checkbox-and-label toggle next to each row expands a second, CSS-only detail row underneath it with the finding's title, filed time, advisories, source, session status, start time, time to PR, check state, ACUs, and lockfile verification.
+`SLA::StatusPage` (`lib/sla/status_page.rb`) reads findings left-joined to sessions and decides everything; `views/status.html.erb` only prints it. A finding is fixed when its pull request is merged or its checks pass. The SLA word is decided in this order:
 
-- `met` — a pull request exists and the tracker first saw it at or before the due date.
-- `late` — a pull request exists but the tracker first saw it after the due date.
-- `breached` — no pull request and the due date has passed.
+- `met` — the pull request was merged or its checks passed at or before the due date.
+- `late` — the pull request was merged or its checks passed after the due date.
+- `breached` — the due date has passed without a green pull request.
+- `ci failing` — the pull request's checks are red and the due date has not passed.
+- `in progress` — a session exists (or a pull request is waiting on checks) and the due date has not passed.
 - `stalled` — no pull request, and the session stopped without a report (`outcome` is `stalled`).
-- `in progress` — no pull request, a session exists, and the due date has not passed.
-- `waiting` — no pull request, no session, and the due date has not passed.
+- `waiting` — no session and the due date has not passed. A finding with no fixed release stays here with its clock running; it needs a policy decision, not a code change.
 
-ACUs read `not reported` when the API returns nil or 0.0: this organisation's usage is not metered through the API, so 0.0 does not mean free; time to PR in the detail row is the cost signal for now.
+ACUs read `not reported` when the API returns nil or 0.0: this organisation's usage is not metered through the API, so 0.0 does not mean free; time to PR and time to green in the detail row are the cost signals for now.
 
 ## Resetting the demo
 
