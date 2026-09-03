@@ -16,11 +16,11 @@ Proof: test/status_page_test.rb test_row_strings_are_formatted_for_the_template;
 test/app_test.rb test_status_page_lists_the_findings_and_refreshes_itself
 
 **PAGE-03** THE page SHALL show one summary line: findings tracked, findings
-whose SLA word is not `breached` or `late` ("fixed inside SLA"), findings
-whose SLA word is `breached` or `late`, and the median time from a session's
-start to its pull request first turning green (merged or checks passing),
-reading `not yet` before any pull request has gone green.
-Proof: test/status_page_test.rb test_summary_counts_findings_open_pull_requests_and_the_two_sides_of_the_window,
+whose SLA word is `met` ("fixed inside SLA"), findings whose SLA word is
+`breached` or `late`, and the median time from a session's start to its pull
+request first turning green (merged or checks passing), reading `not yet`
+before any pull request has gone green.
+Proof: test/status_page_test.rb test_summary_counts_findings_and_the_two_sides_of_the_window,
 test_median_time_to_green_is_not_yet_before_any_pull_request_goes_green,
 test_median_time_to_green_is_computed_from_dispatch_to_first_green
 

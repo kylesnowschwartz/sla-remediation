@@ -90,6 +90,30 @@ module SLA
       assert_equal 1, @notifier.calls.size
     end
 
+    def test_pr_checks_at_is_unchanged_when_checks_are_still_success
+      row_id = record_session(7, WORKING_ID)
+      old_checks_at = Time.now.utc - 3600
+      DB[:sessions].where(id: row_id).update(pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9',
+                                             pr_state: 'open', pr_checks: 'success', pr_checks_at: old_checks_at)
+      session_body = JSON.generate(
+        'session_id' => WORKING_ID, 'url' => "https://app.devin.ai/sessions/#{WORKING_ID}", 'status' => 'running',
+        'title' => '[SLA high] urllib3 2.4.0 → 2.7.0', 'tags' => ['sla-remediation'], 'created_at' => 1_788_342_462,
+        'updated_at' => 1_788_342_500, 'acus_consumed' => 0.0,
+        'pull_requests' => [{ 'pr_url' => 'https://github.com/kylesnowschwartz/superset/pull/9',
+                              'pr_state' => 'open' }],
+        'structured_output' => nil, 'status_detail' => 'waiting_for_user'
+      )
+      stub_session(WORKING_ID, session_body)
+      stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3',
+                                                     check_runs: [{ status: 'completed', conclusion: 'success' }])
+
+      @tracker.poll_once
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal 'success', row[:pr_checks]
+      assert_equal old_checks_at.to_i, row[:pr_checks_at].to_i
+    end
+
     def test_output_of_another_shape_is_kept_as_invalid_with_a_warning
       row_id = record_session(4, WAITING_ID)
       stub_session(WAITING_ID, fixture('get_session_waiting_for_user.json'))

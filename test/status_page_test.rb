@@ -38,6 +38,15 @@ module SLA
       assert_equal 'met', page.rows.fetch(0).sla
     end
 
+    def test_met_stays_met_when_evaluated_long_after_the_due_date
+      finding_id = record_finding(1)
+      record_session(finding_id, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9', pr_state: 'open',
+                                 pr_notified_at: DUE - 3600, pr_checks: 'success', pr_checks_at: DUE - 1800,
+                                 outcome: 'settled')
+
+      assert_equal 'met', page(now: DUE + 86_400).rows.fetch(0).sla
+    end
+
     def test_late_when_the_pull_request_merged_after_the_due_date
       finding_id = record_finding(1)
       record_session(finding_id, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9', pr_state: 'merged',
@@ -160,7 +169,7 @@ module SLA
       assert_equal [5, 2, 3, 6, 1, 4], page.rows.map(&:issue_number)
     end
 
-    def test_summary_counts_findings_open_pull_requests_and_the_two_sides_of_the_window
+    def test_summary_counts_findings_and_the_two_sides_of_the_window
       record_session(record_finding(1, due_at: DUE), pr_url: 'https://github.com/x/y/pull/1', pr_state: 'open',
                                                      pr_notified_at: DUE - 60, pr_checks: 'success',
                                                      pr_checks_at: DUE - 30, outcome: 'settled')
@@ -175,8 +184,7 @@ module SLA
       summary = page.summary
 
       assert_equal 5, summary.findings
-      assert_equal 1, summary.pull_requests_open
-      assert_equal 3, summary.inside_sla
+      assert_equal 1, summary.fixed_inside_sla
       assert_equal 2, summary.breached
       assert_equal %w[breached met late stalled waiting], page.rows.map(&:sla)
     end

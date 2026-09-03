@@ -19,7 +19,7 @@ module SLA
                          pr_notified_at pr_checks pr_checks_at pr_merged_at structured_output
                          structured_output_invalid].freeze
 
-    Summary = Struct.new(:findings, :pull_requests_open, :inside_sla, :breached, :median_time_to_green,
+    Summary = Struct.new(:findings, :fixed_inside_sla, :breached, :median_time_to_green,
                          keyword_init: true)
 
     # One finding left-joined to its session, as the table prints it.
@@ -251,8 +251,7 @@ module SLA
     def summary
       @summary ||= Summary.new(
         findings: rows.size,
-        pull_requests_open: rows.count { |row| row.pr_state == 'open' },
-        inside_sla: rows.count { |row| !row.breached? },
+        fixed_inside_sla: rows.count { |row| row.sla == 'met' },
         breached: rows.count(&:breached?),
         median_time_to_green: median_time_to_green
       )

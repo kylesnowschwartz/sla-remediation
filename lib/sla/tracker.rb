@@ -171,7 +171,8 @@ module SLA
     end
 
     def pr_changes(row, status)
-      changes = { pr_checks: status.checks, pr_checks_at: Time.now.utc }
+      changes = {}
+      changes.merge!(pr_checks: status.checks, pr_checks_at: Time.now.utc) if status.checks != row[:pr_checks]
       changes[:pr_merged_at] = Time.now.utc if status.merged && row[:pr_merged_at].nil?
       changes
     end
