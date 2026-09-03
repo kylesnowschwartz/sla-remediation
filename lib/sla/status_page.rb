@@ -14,10 +14,13 @@ module SLA
     SEVERITY_ORDER = %w[critical high medium low].freeze
     TIME_FORMAT = Notifier::DUE_AT_FORMAT
     NONE = '—'
+    NOT_YET = 'not yet'
     SESSION_COLUMNS = %i[devin_session_id status status_detail acus_consumed pr_url pr_state outcome started_at
-                         pr_notified_at structured_output structured_output_invalid].freeze
+                         pr_notified_at pr_checks pr_checks_at pr_merged_at structured_output
+                         structured_output_invalid].freeze
 
-    Summary = Struct.new(:findings, :pull_requests_open, :inside_sla, :breached, keyword_init: true)
+    Summary = Struct.new(:findings, :pull_requests_open, :inside_sla, :breached, :median_time_to_green,
+                         keyword_init: true)
 
     # One finding left-joined to its session, as the table prints it.
     class Row
@@ -108,6 +111,36 @@ module SLA
         StatusPage.duration(record[:pr_notified_at] - record[:started_at])
       end
 
+      # The check state as GitHubClient reports it (`pending`, `failure`,
+      # `success`, or `none`), or nil before the tracker has observed any.
+      def checks
+        record[:pr_checks]
+      end
+
+      def checks?
+        !record[:pr_checks].nil?
+      end
+
+      # When the checks (or the merge) were last observed, formatted for the
+      # template.
+      def checks_observed_at
+        StatusPage.time(record[:pr_merged_at] || record[:pr_checks_at])
+      end
+
+      # The time the pull request first turned green (merged, or its checks
+      # passed), or nil while it has not.
+      def green_at
+        record[:pr_merged_at] || (record[:pr_checks] == 'success' ? record[:pr_checks_at] : nil)
+      end
+
+      # How long the session ran before its pull request turned green, or nil
+      # when it has not (yet, or ever).
+      def time_to_green
+        return nil unless record[:started_at] && green_at
+
+        StatusPage.duration(green_at - record[:started_at])
+      end
+
       def acus
         acus_reported? ? record[:acus_consumed].to_s : NOT_REPORTED
       end
@@ -159,14 +192,24 @@ module SLA
       def sla_word
         due_at = record[:due_at]
         if pr_url
-          # A cleared pr_notified_at means the issue comment failed and is being
-          # retried; the pull request itself is still there, so judge it by now.
-          (record[:pr_notified_at] || now) <= due_at ? 'met' : 'late'
+          pr_sla_word(due_at)
         elsif now > due_at then 'breached'
         elsif record[:outcome] == Tracker::STALLED then 'stalled'
         elsif session? then 'in progress'
         else 'waiting'
         end
+      end
+
+      # met/late once the pull request is merged or its checks are green,
+      # judged by when that happened against the due date; otherwise breached
+      # once the due date has passed, ci failing while checks are red inside
+      # the window, and in progress while checks are pending or unobserved.
+      def pr_sla_word(due_at)
+        return (green_at <= due_at ? 'met' : 'late') if green_at
+        return 'breached' if now > due_at
+        return 'ci failing' if record[:pr_checks] == 'failure'
+
+        'in progress'
       end
     end
 
@@ -210,11 +253,27 @@ module SLA
         findings: rows.size,
         pull_requests_open: rows.count { |row| row.pr_state == 'open' },
         inside_sla: rows.count { |row| !row.breached? },
-        breached: rows.count(&:breached?)
+        breached: rows.count(&:breached?),
+        median_time_to_green: median_time_to_green
       )
     end
 
     private
+
+    def median_time_to_green
+      seconds = rows.filter_map do |row|
+        row.green_at && row.record[:started_at] && (row.green_at - row.record[:started_at])
+      end
+      return NOT_YET if seconds.empty?
+
+      self.class.duration(median(seconds))
+    end
+
+    def median(values)
+      sorted = values.sort
+      mid = sorted.length / 2
+      sorted.length.odd? ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2.0
+    end
 
     def records
       @db[:findings]

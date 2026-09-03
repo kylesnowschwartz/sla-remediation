@@ -28,7 +28,8 @@ module SLA
       DB[:sessions].insert(finding_id: finding_id, devin_session_id: '812ce7c3f89f4e88bce68dc03c9dd462',
                            status: 'running', status_detail: 'waiting_for_user', started_at: Time.now.utc - 900,
                            last_polled_at: Time.now.utc, pr_url: 'https://github.com/kylesnowschwartz/superset/pull/9',
-                           pr_state: 'open', pr_notified_at: Time.now.utc, outcome: 'settled')
+                           pr_state: 'open', pr_notified_at: Time.now.utc, pr_checks: 'success',
+                           pr_checks_at: Time.now.utc, outcome: 'settled')
 
       get '/'
 

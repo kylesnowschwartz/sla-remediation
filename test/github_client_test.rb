@@ -199,6 +199,60 @@ module SLA
       assert_equal 'fix/urllib3-sla-4', pull.head_branch
     end
 
+    def test_pull_request_status_is_success_when_every_run_completed_and_passed
+      stub_request(:get, "#{PULLS_URL}/9")
+        .to_return(status: 200, body: { number: 9, merged: false, mergeable: true,
+                                        head: { sha: 'abc123' } }.to_json, headers: json_header)
+      stub_request(:get, 'https://api.github.com/repos/kylesnowschwartz/superset/commits/abc123/check-runs')
+        .to_return(status: 200, body: { check_runs: [{ status: 'completed', conclusion: 'success' },
+                                                     { status: 'completed', conclusion: 'neutral' },
+                                                     { status: 'completed', conclusion: 'skipped' }] }.to_json,
+                   headers: json_header)
+
+      status = @client.pull_request_status('kylesnowschwartz/superset', 9)
+
+      assert_equal 'abc123', status.head_sha
+      assert_equal false, status.merged
+      assert_equal true, status.mergeable
+      assert_equal 'success', status.checks
+    end
+
+    def test_pull_request_status_is_pending_when_a_run_has_not_completed
+      stub_request(:get, "#{PULLS_URL}/9")
+        .to_return(status: 200, body: { number: 9, merged: false, mergeable: nil,
+                                        head: { sha: 'abc123' } }.to_json, headers: json_header)
+      stub_request(:get, 'https://api.github.com/repos/kylesnowschwartz/superset/commits/abc123/check-runs')
+        .to_return(status: 200, body: { check_runs: [{ status: 'in_progress', conclusion: nil }] }.to_json,
+                   headers: json_header)
+
+      assert_equal 'pending', @client.pull_request_status('kylesnowschwartz/superset', 9).checks
+    end
+
+    def test_pull_request_status_is_failure_when_a_completed_run_failed
+      stub_request(:get, "#{PULLS_URL}/9")
+        .to_return(status: 200, body: { number: 9, merged: false, mergeable: false,
+                                        head: { sha: 'abc123' } }.to_json, headers: json_header)
+      stub_request(:get, 'https://api.github.com/repos/kylesnowschwartz/superset/commits/abc123/check-runs')
+        .to_return(status: 200, body: { check_runs: [{ status: 'completed', conclusion: 'success' },
+                                                     { status: 'completed', conclusion: 'failure' }] }.to_json,
+                   headers: json_header)
+
+      assert_equal 'failure', @client.pull_request_status('kylesnowschwartz/superset', 9).checks
+    end
+
+    def test_pull_request_status_is_none_when_there_are_no_check_runs
+      stub_request(:get, "#{PULLS_URL}/9")
+        .to_return(status: 200, body: { number: 9, merged: true, mergeable: nil,
+                                        head: { sha: 'abc123' } }.to_json, headers: json_header)
+      stub_request(:get, 'https://api.github.com/repos/kylesnowschwartz/superset/commits/abc123/check-runs')
+        .to_return(status: 200, body: { check_runs: [] }.to_json, headers: json_header)
+
+      status = @client.pull_request_status('kylesnowschwartz/superset', 9)
+
+      assert_equal 'none', status.checks
+      assert_equal true, status.merged
+    end
+
     def test_delete_branch_deletes_the_head_ref
       stub_request(:delete, REFS_URL).to_return(status: 204, body: '')
 

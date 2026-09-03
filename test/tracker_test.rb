@@ -35,13 +35,24 @@ module SLA
       DB[:findings].delete
       @log_io = StringIO.new
       @notifier = SpyNotifier.new
+      @github = GitHubClient.new(token: 'test-token')
       @tracker = Tracker.new(db: DB, devin: DevinClient.new(api_key: 'test-key', org_id: ORG_ID),
-                             notifier: @notifier, log: Logger.new(@log_io))
+                             notifier: @notifier, github: @github, log: Logger.new(@log_io))
+    end
+
+    def stub_pr_status(repo, number, sha:, merged: false, mergeable: true, check_runs: [])
+      stub_request(:get, "https://api.github.com/repos/#{repo}/pulls/#{number}")
+        .to_return(status: 200, body: { number: number, merged: merged, mergeable: mergeable,
+                                        head: { sha: sha } }.to_json, headers: JSON_HEADER)
+      stub_request(:get, "https://api.github.com/repos/#{repo}/commits/#{sha}/check-runs")
+        .to_return(status: 200, body: { check_runs: check_runs }.to_json, headers: JSON_HEADER)
     end
 
     def test_settled_session_with_pull_request_and_output_is_recorded_and_notified_once
       row_id = record_session(8, SETTLED_ID)
       stub_session(SETTLED_ID, fixture('get_session_settled_with_pr_and_output.json'))
+      stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3',
+                                                     check_runs: [{ status: 'completed', conclusion: 'success' }])
 
       summary = @tracker.poll_once
 
@@ -57,6 +68,9 @@ module SLA
       assert_equal 'settled', row[:outcome]
       assert_equal Time.at(1_788_342_608).utc, row[:finished_at]
       assert_in_delta Time.now.utc, row[:pr_notified_at], 5
+      assert_equal 'success', row[:pr_checks]
+      assert_in_delta Time.now.utc, row[:pr_checks_at], 5
+      assert_nil row[:pr_merged_at]
       assert_nil row[:structured_output_invalid]
       output = JSON.parse(row[:structured_output])
 
@@ -102,6 +116,8 @@ module SLA
     def test_suspended_session_with_pull_request_is_settled_and_notified_once
       row_id = record_session(2, SUSPENDED_ID)
       stub_session(SUSPENDED_ID, fixture('get_session_suspended_with_pr.json'))
+      stub_pr_status('kylesnowschwartz/superset', 2, sha: 'd4e5f6',
+                                                     check_runs: [{ status: 'completed', conclusion: 'success' }])
 
       summary = @tracker.poll_once
 
@@ -113,6 +129,7 @@ module SLA
       assert_equal 'https://github.com/kylesnowschwartz/superset/pull/2', row[:pr_url]
       assert_equal 'open', row[:pr_state]
       assert_equal 'settled', row[:outcome]
+      assert_equal 'success', row[:pr_checks]
       assert_nil row[:structured_output]
       assert_nil row[:structured_output_invalid]
       assert_equal 1, @notifier.calls.size
@@ -187,6 +204,8 @@ module SLA
       stub_request(:get, "#{SESSIONS_URL}/#{WORKING_ID}").to_return(status: 503, body: '{"detail":"unavailable"}',
                                                                     headers: JSON_HEADER)
       stub_session(SETTLED_ID, fixture('get_session_settled_with_pr_and_output.json'))
+      stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3',
+                                                     check_runs: [{ status: 'completed', conclusion: 'success' }])
 
       summary = @tracker.poll_once
 
@@ -203,6 +222,8 @@ module SLA
     def test_a_failed_notification_clears_the_timestamp_and_leaves_the_row_open
       row_id = record_session(8, SETTLED_ID)
       stub_session(SETTLED_ID, fixture('get_session_settled_with_pr_and_output.json'))
+      stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3',
+                                                     check_runs: [{ status: 'completed', conclusion: 'success' }])
       seen = []
       failing = Object.new
       failing.define_singleton_method(:pr_opened) do |_finding, session_row|
@@ -210,7 +231,7 @@ module SLA
         raise GitHubAPIError.new(status: 502, body: 'bad gateway')
       end
       tracker = Tracker.new(db: DB, devin: DevinClient.new(api_key: 'test-key', org_id: ORG_ID), notifier: failing,
-                            log: Logger.new(@log_io))
+                            github: @github, log: Logger.new(@log_io))
 
       summary = tracker.poll_once
 

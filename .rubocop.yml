@@ -28,6 +28,8 @@ Metrics/ClassLength:
   Exclude:
     - "test/**/*_test.rb"
     - "lib/sla/status_page.rb"
+    - "lib/sla/github_client.rb"
+    - "lib/sla/tracker.rb"
 
 Metrics/MethodLength:
   Exclude:

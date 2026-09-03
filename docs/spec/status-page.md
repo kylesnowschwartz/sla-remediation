@@ -15,10 +15,14 @@ was rendered.
 Proof: test/status_page_test.rb test_row_strings_are_formatted_for_the_template;
 test/app_test.rb test_status_page_lists_the_findings_and_refreshes_itself
 
-**PAGE-03** THE page SHALL show four counts: findings tracked, pull requests
-whose state is `open`, findings whose SLA word is not `breached` or `late`,
-and findings whose SLA word is `breached` or `late`.
-Proof: test/status_page_test.rb test_summary_counts_findings_open_pull_requests_and_the_two_sides_of_the_window
+**PAGE-03** THE page SHALL show one summary line: findings tracked, findings
+whose SLA word is not `breached` or `late` ("fixed inside SLA"), findings
+whose SLA word is `breached` or `late`, and the median time from a session's
+start to its pull request first turning green (merged or checks passing),
+reading `not yet` before any pull request has gone green.
+Proof: test/status_page_test.rb test_summary_counts_findings_open_pull_requests_and_the_two_sides_of_the_window,
+test_median_time_to_green_is_not_yet_before_any_pull_request_goes_green,
+test_median_time_to_green_is_computed_from_dispatch_to_first_green
 
 **PAGE-04** THE page SHALL list one row per finding, ordered by severity
 (`critical`, `high`, `medium`, `low`, then anything else) and within a
@@ -32,23 +36,36 @@ Proof: test/app_test.rb test_house_style_is_served
 
 Decided in this order; the first rule that applies wins.
 
-**PAGE-06** IF the finding has a pull request and the tracker first saw it
-at or before the due date, THEN the word SHALL be `met`.
-Proof: test/status_page_test.rb test_met_when_the_pull_request_was_seen_before_the_due_date
+**PAGE-06** IF the finding has a pull request that is merged, or whose
+checks are `success`, at or before the due date, THEN the word SHALL be
+`met`.
+Proof: test/status_page_test.rb test_met_when_the_pull_request_merged_before_the_due_date,
+test_met_when_the_pull_request_checks_went_green_before_the_due_date
 
-**PAGE-07** IF the finding has a pull request and the tracker first saw it
-after the due date, THEN the word SHALL be `late`.
-Proof: test/status_page_test.rb test_late_when_the_pull_request_was_seen_after_the_due_date
+**PAGE-07** IF the finding has a pull request that turned green (merged, or
+its checks passed) after the due date, THEN the word SHALL be `late`.
+Proof: test/status_page_test.rb test_late_when_the_pull_request_merged_after_the_due_date
 
-**PAGE-08** IF the finding has a pull request but its first-seen time is
-cleared because the issue comment is being retried, THEN the page SHALL
-judge `met` or `late` by the current time.
-Proof: test/status_page_test.rb test_a_pull_request_whose_comment_is_being_retried_is_judged_by_now
+**PAGE-07A** IF the finding has a pull request whose checks are `pending`
+(or not yet observed) and the due date has not passed, THEN the word SHALL
+be `in progress`.
+Proof: test/status_page_test.rb test_in_progress_when_the_pull_requests_checks_are_pending,
+test_a_pull_request_without_observed_checks_yet_is_in_progress_then_breached
+
+**PAGE-08** IF the finding has a pull request whose checks are `failure`
+and the due date has not passed, THEN the word SHALL be `ci failing`,
+tagged `[CI FAILING]` and coloured the same as `breached`/`late`.
+Proof: test/status_page_test.rb test_ci_failing_when_checks_are_red_inside_the_window
 
 **PAGE-09** IF there is no pull request and now is after the due date, THEN
-the word SHALL be `breached`, even when the session stalled.
+the word SHALL be `breached`, even when the session stalled; a pull
+request that has not turned green (whatever its checks say) is judged the
+same way once the due date has passed.
 Proof: test/status_page_test.rb test_breached_when_there_is_no_pull_request_and_the_due_date_has_passed,
-test_breached_takes_precedence_over_a_stalled_session_once_the_due_date_has_passed
+test_breached_takes_precedence_over_a_stalled_session_once_the_due_date_has_passed,
+test_breached_when_checks_are_still_red_past_the_due_date,
+test_breached_when_a_pull_request_is_open_but_never_went_green_past_the_due_date,
+test_a_pull_request_without_observed_checks_yet_is_in_progress_then_breached
 
 **PAGE-10** IF there is no pull request, the due date has not passed, and
 the session's outcome is `stalled`, THEN the word SHALL be `stalled`.
@@ -89,13 +106,13 @@ sessions row, the outcome once there is one, and otherwise
 `<status>/<status_detail>`; it SHALL link to the Devin session when the row
 has a session id and not otherwise.
 Proof: test/status_page_test.rb test_waiting_when_nothing_has_been_dispatched_inside_the_window,
-test_met_when_the_pull_request_was_seen_before_the_due_date,
+test_met_when_the_pull_request_merged_before_the_due_date,
 test_breached_when_there_is_no_pull_request_and_the_due_date_has_passed,
 test_a_reserved_session_row_without_a_devin_session_id_counts_as_in_progress_without_a_link
 
 **PAGE-18** THE pull request cell SHALL show the pull request number, linked,
 and its state, or a dash when there is none.
-Proof: test/status_page_test.rb test_met_when_the_pull_request_was_seen_before_the_due_date;
+Proof: test/status_page_test.rb test_met_when_the_pull_request_merged_before_the_due_date;
 test/app_test.rb test_status_page_lists_the_findings_and_refreshes_itself
 
 **PAGE-19** THE detail row SHALL show the duration from the session's start
@@ -103,7 +120,7 @@ to the tracker's first sighting of the pull request, omitting the line
 entirely when either time is missing.
 Proof: test/status_page_test.rb test_row_strings_are_formatted_for_the_template,
 test_in_progress_when_a_session_exists_without_a_pull_request_inside_the_window,
-test_a_pull_request_whose_comment_is_being_retried_is_judged_by_now
+test_a_pull_request_without_observed_checks_yet_is_in_progress_then_breached
 
 **PAGE-20** IF the finding has a session, THEN the detail row SHALL show
 the ACUs consumed, or `not reported` when it is absent or exactly 0.0; IF
@@ -151,6 +168,12 @@ structured output that failed schema validation, THEN it SHALL show
 Proof: test/status_page_test.rb test_lockfile_reads_the_structured_output_and_is_nil_before_a_report,
 test_lockfile_reports_not_clean_when_verification_failed,
 test_lockfile_reports_a_rejected_report_when_the_schema_did_not_validate
+
+**PAGE-28** IF the finding has a pull request whose checks have been
+observed, THEN the detail row SHALL show the check state and when it (or
+the merge) was observed; IF checks have not been observed, THEN the line
+SHALL be omitted.
+Proof: test/status_page_test.rb test_checks_line_shows_the_check_state_and_when_it_was_observed
 
 ## Unproven
 

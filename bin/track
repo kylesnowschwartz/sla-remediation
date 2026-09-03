@@ -35,15 +35,16 @@ unless missing.empty?
   exit 1
 end
 
+github = SLA::GitHubClient.new(token: ENV.fetch('SLA_GITHUB_TOKEN', nil))
 notifier =
   if ENV['SLA_GITHUB_TOKEN'].to_s.empty?
     SLA::Notifier::Null.new
   else
-    SLA::Notifier::IssueComment.new(github: SLA::GitHubClient.new(token: ENV.fetch('SLA_GITHUB_TOKEN')),
-                                    repo: ENV.fetch('SLA_REPO'))
+    SLA::Notifier::IssueComment.new(github: github, repo: ENV.fetch('SLA_REPO'))
   end
 
-tracker = SLA::Tracker.new(db: SLA::DB, devin: SLA::DevinClient.new, notifier: notifier, log: Logger.new($stderr))
+tracker = SLA::Tracker.new(db: SLA::DB, devin: SLA::DevinClient.new, notifier: notifier, github: github,
+                           log: Logger.new($stderr))
 summary_line = ->(summary) { summary.map { |key, value| "#{key}=#{value}" }.join(' ') }
 
 unless loop_forever
