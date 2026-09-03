@@ -2,9 +2,9 @@
 # frozen_string_literal: true
 
 # Reads the fixture written by bin/demo-export into the database, shifting
-# every timestamp forward by the same amount so the newest check or merge time
-# lands at load time; every interval between events is kept, so the status
-# page reads exactly as it did when the fixture was captured. The loaded
+# every timestamp forward by the same amount so the export time lands at load
+# time; every interval between events is kept, so the status page reads
+# exactly as it did when the fixture was captured. The loaded
 # sessions are already closed, so a running tracker has nothing to poll.
 #
 #   bin/demo-load                # load db/fixtures/demo.json into an empty database

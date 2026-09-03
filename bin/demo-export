@@ -10,7 +10,8 @@
 #   bin/demo-export --output FILE      # write somewhere else
 #
 # Needs no environment variables beyond SLA_DATABASE_URL when the database is
-# not at its default path.
+# not at its default path. Exits 1 without writing when both tables are empty,
+# so a fresh database never overwrites a captured fixture.
 
 require 'bundler/setup'
 require 'fileutils'
@@ -28,7 +29,12 @@ OptionParser.new do |opts|
   opts.on('--output FILE', "Where to write the fixture (default #{DEFAULT_PATH})") { |file| path = file }
 end.parse!
 
-fixture = SLA::DemoFixture.new(SLA::DB).export
+begin
+  fixture = SLA::DemoFixture.new(SLA::DB).export
+rescue SLA::DemoFixture::DatabaseEmpty => e
+  warn "#{e.message} (database #{SLA::DB.url})"
+  exit 1
+end
 FileUtils.mkdir_p(File.dirname(path))
 File.write(path, "#{JSON.pretty_generate(fixture)}\n")
 puts "wrote #{path}"

@@ -40,6 +40,13 @@ module SLA
       assert_equal "exported 4 findings\nexported 3 sessions\n", @out.string
     end
 
+    def test_export_refuses_an_empty_database
+      error = assert_raises(DemoFixture::DatabaseEmpty) { fixture_for.export(now: CAPTURED) }
+
+      assert_equal 'both tables are empty; nothing to export', error.message
+      assert_equal '', @out.string
+    end
+
     def test_load_puts_the_rows_back_and_the_page_reads_the_same_words_days_later
       fixture = exported_run
       assert_equal %w[breached late met waiting], page(now: CAPTURED).rows.map(&:sla)
@@ -49,10 +56,10 @@ module SLA
 
       assert_equal 4, summary[:findings]
       assert_equal 3, summary[:sessions]
-      assert_equal (LOADED - Time.utc(2026, 9, 2, 8, 50, 0)).to_i, summary[:shift_seconds]
+      assert_equal (LOADED - CAPTURED).to_i, summary[:shift_seconds]
       assert_equal %w[breached late met waiting], page(now: LOADED).rows.map(&:sla)
       assert_equal %w[breached late met waiting], page(now: LOADED + (3 * 86_400)).rows.map(&:sla)
-      assert_equal LOADED, DB[:sessions].select_map(:pr_merged_at).compact.max
+      assert_equal LOADED - 600, DB[:sessions].select_map(:pr_merged_at).compact.max
       assert_equal "loaded 4 findings\nloaded 3 sessions\nshifted every timestamp forward by 7d 6h\n", @out.string
     end
 
@@ -92,22 +99,34 @@ module SLA
                    "shifted every timestamp forward by 7d 6h\n", @out.string
     end
 
-    def test_load_without_any_check_or_merge_time_anchors_on_the_newest_timestamp
+    def test_load_anchors_on_the_export_time_so_a_due_date_ahead_of_it_stays_ahead
       record_finding(1, created_at: CAPTURED - 7200, due_at: CAPTURED + 3600)
-      fixture = fixture_for.export(now: CAPTURED)
+      fixture = JSON.parse(fixture_for.export(now: CAPTURED).to_json)
       clear
 
       fixture_for.load(fixture, now: LOADED)
 
-      assert_equal LOADED, DB[:findings].get(:due_at)
-      assert_equal LOADED - 10_800, DB[:findings].get(:created_at)
+      assert_equal LOADED + 3600, DB[:findings].get(:due_at)
+      assert_equal LOADED - 7200, DB[:findings].get(:created_at)
+      assert_equal ['waiting'], page(now: LOADED).rows.map(&:sla)
     end
 
     def test_load_of_an_empty_fixture_inserts_nothing
-      summary = fixture_for.load({ 'findings' => [], 'sessions' => [] }, now: LOADED)
+      fixture = { 'exported_at' => CAPTURED.iso8601, 'findings' => [], 'sessions' => [] }
+
+      summary = fixture_for.load(fixture, now: CAPTURED)
 
       assert_equal({ findings: 0, sessions: 0, shift_seconds: 0 }, summary)
       assert_equal 0, DB[:findings].count
+    end
+
+    def test_the_page_names_the_fork_from_the_loaded_rows_when_sla_repo_is_unset
+      fixture = exported_run
+      clear
+
+      fixture_for.load(fixture, now: LOADED)
+
+      assert_equal 'kylesnowschwartz/superset', StatusPage.new(DB, now: LOADED).repo
     end
 
     private

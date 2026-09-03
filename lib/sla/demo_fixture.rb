@@ -11,17 +11,20 @@ module SLA
   # file, so a status page can be filled from a captured run without any
   # credentials. `export` writes every row of both tables with timestamps as
   # ISO 8601 UTC strings; `load` reads them back, shifting every timestamp
-  # forward by one amount so the newest check or merge time lands at load
-  # time and every interval between events is kept.
+  # forward by one amount so the export time lands at load time and every
+  # interval between events is kept.
   class DemoFixture
     TABLES = %i[findings sessions].freeze
-    ANCHOR_COLUMNS = %i[pr_checks_at pr_merged_at].freeze
     NOTE = 'Rows of the findings and sessions tables from one run of the demo against the fork, ' \
            'for bin/demo-load. Nothing here is secret: issue numbers, package names, session ids, ' \
            'pull request URLs and check states.'
 
     # Raised by `load` when a table already has rows and `replace` was not asked for.
     class DatabaseNotEmpty < Error; end
+
+    # Raised by `export` when both tables are empty, so a fixture is never
+    # overwritten by a fresh database.
+    class DatabaseEmpty < Error; end
 
     def initialize(db, out: $stdout)
       @db = db
@@ -31,6 +34,7 @@ module SLA
     # Both tables as a Hash ready for JSON: a note with the export time, then
     # every row of each table with Time values as ISO 8601 UTC strings.
     def export(now: Time.now.utc)
+      refuse_empty
       exported_at = now.utc.iso8601
       fixture = { 'note' => "#{NOTE} Exported #{exported_at}.", 'exported_at' => exported_at }
       TABLES.each do |table|
@@ -41,12 +45,12 @@ module SLA
       fixture
     end
 
-    # Inserts the fixture's rows, timestamps shifted so the newest check or
-    # merge time is `now`. Refuses when either table has rows unless
-    # `replace`, which empties both first. Returns the counts and the shift.
+    # Inserts the fixture's rows, timestamps shifted so its export time is
+    # `now`. Refuses when either table has rows unless `replace`, which
+    # empties both first. Returns the counts and the shift.
     def load(fixture, now: Time.now.utc, replace: false)
       rows = TABLES.to_h { |table| [table, parse_rows(fixture, table)] }
-      shift = shift_for(rows, now.utc)
+      shift = now.utc - Time.iso8601(fixture.fetch('exported_at'))
       @db.transaction do
         clear_or_refuse(replace)
         insert(rows, shift)
@@ -56,6 +60,10 @@ module SLA
     end
 
     private
+
+    def refuse_empty
+      raise DatabaseEmpty, 'both tables are empty; nothing to export' if TABLES.all? { |table| @db[table].empty? }
+    end
 
     def datetime_columns(table)
       @db.schema(table).filter_map { |column, info| column if info[:type] == :datetime }
@@ -73,18 +81,6 @@ module SLA
           [column, columns.include?(column) && value ? Time.iso8601(value) : value]
         end
       end
-    end
-
-    # Seconds from the newest check or merge time in the fixture to `now`;
-    # with no checks or merges recorded, from the newest timestamp of any kind.
-    def shift_for(rows, now)
-      anchor = newest(rows[:sessions], ANCHOR_COLUMNS) ||
-               newest(rows.values.flatten, TABLES.flat_map { |table| datetime_columns(table) })
-      anchor ? now - anchor : 0.0
-    end
-
-    def newest(rows, columns)
-      rows.flat_map { |row| row.values_at(*columns) }.compact.max
     end
 
     def insert(rows, shift)

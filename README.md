@@ -119,11 +119,12 @@ docker compose run --rm app bin/demo-load
 
 then open http://localhost:4567. What you are looking at is the status page
 from a real run against the demo fork, `kylesnowschwartz/superset`, with
-every timestamp shifted so the run ends at the moment you loaded it: a
-major-version upgrade, two pin bumps, and one finding with no fixed release
+every timestamp shifted so the capture happened at the moment you loaded it:
+a major-version upgrade, two pin bumps, and one finding with no fixed release
 that stays waiting with its clock running. The intervals between events are
 the ones the run had, so every SLA word is the one the run earned, and the
-page ages from here at the same rate a live run would. Expand a row to see
+page ages from here at the same rate a live run would. The page names the
+fork from the loaded rows, so `SLA_REPO` can stay unset. Expand a row to see
 the session's report and the state of the pull request's checks. Scanning and
 dispatching are not exercised in this mode: nothing is read from GitHub and
 no Devin session is started. The first command starts only the web server;
@@ -169,7 +170,9 @@ docker compose run --rm app bin/dispatch <issue_number>
 ```
 
 The database is a SQLite file on the named volume `sla-db`, shared by the web
-server and the tracker. `docker compose down -v` deletes it.
+server and the tracker. `docker compose down -v` deletes it. The `app`
+service also mounts the repository's `db/fixtures/` directory, so a fixture
+written inside the container lands in the working tree.
 
 ## Run it against your own fork
 
@@ -326,7 +329,11 @@ bin/demo-reset && bin/scan
 
 After a good run, before the reset, `bin/demo-export` writes the findings and
 sessions to `db/fixtures/demo.json`, the fixture that `bin/demo-load` shows
-to a reader without credentials.
+to a reader without credentials; under Compose that is
+`docker compose run --rm app bin/demo-export`, and the file appears in the
+working tree through the `db/fixtures/` mount. It refuses to write from an
+empty database, so a run against the wrong database cannot replace a captured
+fixture with nothing.
 
 ## In production
 
