@@ -16,8 +16,8 @@ module SLA
     NONE = '—'
     NOT_YET = 'not yet'
     SESSION_COLUMNS = %i[devin_session_id status status_detail acus_consumed pr_url pr_state outcome started_at
-                         pr_notified_at pr_checks pr_checks_at pr_merged_at structured_output
-                         structured_output_invalid].freeze
+                         pr_notified_at pr_checks pr_checks_at pr_merged_at pr_head_sha ci_repair_sha ci_repairs
+                         structured_output structured_output_invalid].freeze
 
     Summary = Struct.new(:findings, :fixed_inside_sla, :breached, :median_time_to_green,
                          keyword_init: true)
@@ -127,11 +127,41 @@ module SLA
         StatusPage.time(record[:pr_merged_at] || record[:pr_checks_at])
       end
 
+      # How many times the tracker has sent red checks back to the session.
+      def ci_repairs
+        record[:ci_repairs].to_i
+      end
+
+      def ci_repairs?
+        ci_repairs.positive?
+      end
+
+      # The pull request was closed without being merged: nothing landed, and
+      # the tracker has stopped looking at it.
+      def closed?
+        record[:pr_state] == 'closed'
+      end
+
+      # The pull request is open with red checks.
+      def red?
+        record[:pr_state] == 'open' && record[:pr_checks] == 'failure'
+      end
+
+      # The checks are red on the very commit the session was last asked to
+      # repair, so the session is presumed to be working on it; once the
+      # checks are observed on a later commit this is false again.
+      def repairing?
+        red? && ci_repairs? && record[:ci_repair_sha] == record[:pr_head_sha]
+      end
+
       # When the pull request turned green: its merge time, else the time its
       # checks last completed while they are passing (a later push that goes
-      # green again moves this forward), or nil while it has not.
+      # green again moves this forward), or nil while it has not. Green checks
+      # on a pull request closed without merging fixed nothing.
       def green_at
-        record[:pr_merged_at] || (record[:pr_checks] == 'success' ? record[:pr_checks_at] : nil)
+        return record[:pr_merged_at] if record[:pr_merged_at]
+
+        record[:pr_checks_at] if record[:pr_checks] == 'success' && !closed?
       end
 
       # Seconds from the session's start to the pull request turning green, or
@@ -151,7 +181,7 @@ module SLA
         !(acus_consumed.nil? || acus_consumed.zero?)
       end
 
-      # "running/finished → settled", or just "running/finished" before the
+      # "running/finished → reported", or just "running/finished" before the
       # session has closed.
       def session_status
         record[:outcome] ? "#{status_line} → #{record[:outcome]}" : status_line
@@ -203,18 +233,25 @@ module SLA
 
       # met/late once the pull request is merged or its checks are green,
       # judged by when that happened against the due date; otherwise breached
-      # once the due date has passed, ci failing while checks are red inside
-      # the window, and in progress while checks are pending or unobserved.
+      # once the due date has passed, closed while the pull request was closed
+      # unmerged inside the window, repairing while an open pull request's
+      # checks are red inside the window on a commit the session has been
+      # asked to fix, ci failing while they are red otherwise, and in progress
+      # while checks are pending or unobserved.
       def pr_sla_word(due_at)
         return (green_at <= due_at ? 'met' : 'late') if green_at
         return 'breached' if now > due_at
-        return 'ci failing' if record[:pr_checks] == 'failure'
+        return 'closed' if closed?
+        return 'repairing' if repairing?
+        return 'ci failing' if red?
 
         'in progress'
       end
     end
 
-    attr_reader :repo, :now
+    ISSUE_URL_REPO = %r{\Ahttps://github\.com/([^/]+/[^/]+)/issues/\d+\z}
+
+    attr_reader :now
 
     # `2m 30s` under an hour, `3h 12m` under a day, `2d 4h` from a day up.
     def self.duration(seconds)
@@ -239,6 +276,13 @@ module SLA
       @db = db
       @repo = repo
       @now = now
+    end
+
+    # The repository given at construction, else the one the findings' issue
+    # URLs point at, so a page filled from a fixture names its fork without
+    # SLA_REPO being set.
+    def repo
+      @repo ||= records.filter_map { |record| record[:issue_url].to_s[ISSUE_URL_REPO, 1] }.first
     end
 
     def rendered_at
@@ -274,11 +318,11 @@ module SLA
     end
 
     def records
-      @db[:findings]
-        .left_join(:sessions, finding_id: :id)
-        .select_all(:findings)
-        .select_append(Sequel[:sessions][:id].as(:session_row_id), *SESSION_COLUMNS)
-        .all
+      @records ||= @db[:findings]
+                   .left_join(:sessions, finding_id: :id)
+                   .select_all(:findings)
+                   .select_append(Sequel[:sessions][:id].as(:session_row_id), *SESSION_COLUMNS)
+                   .all
     end
 
     def sorted(records)

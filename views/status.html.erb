@@ -71,9 +71,9 @@
     .sev-low { color: var(--muted); }
     .tag { font-weight: var(--weight-bold); }
     .sla-met { color: var(--positive); }
-    .sla-in-progress, .sla-waiting { color: var(--warning); }
+    .sla-in-progress, .sla-waiting, .sla-repairing { color: var(--warning); }
     .sla-breached, .sla-late, .sla-ci-failing { color: var(--critical); }
-    .sla-stalled { color: var(--muted); }
+    .sla-stalled, .sla-closed { color: var(--muted); }
     .overdue { color: var(--critical); }
     a { color: var(--accent); text-decoration: none; }
     a:hover { color: var(--accent-hover); text-decoration: underline; }
@@ -218,6 +218,9 @@
           <% end %>
           <% if row.checks? %>
             <dt>checks</dt><dd><%= h row.checks %> <span class="muted">as of <%= h row.checks_observed_at %></span></dd>
+          <% end %>
+          <% if row.ci_repairs? %>
+            <dt>ci repairs</dt><dd><%= h row.ci_repairs %></dd>
           <% end %>
           <% if row.session? && row.acus_reported? %>
             <dt>ACUs</dt><dd><%= h row.acus %></dd>

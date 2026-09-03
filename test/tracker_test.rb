@@ -10,7 +10,7 @@ module SLA
     SESSIONS_URL = "https://api.devin.ai/v3/organizations/#{ORG_ID}/sessions".freeze
     FIXTURES = File.expand_path('fixtures/devin', __dir__)
     JSON_HEADER = { 'Content-Type' => 'application/json' }.freeze
-    SETTLED_ID = '812ce7c3f89f4e88bce68dc03c9dd462'
+    REPORTED_ID = '812ce7c3f89f4e88bce68dc03c9dd462'
     WAITING_ID = '7cde046172a044b18c55ceeabe09e028'
     SUSPENDED_ID = '18fc67a110a9424ebf9561ebfba3757b'
     WORKING_ID = 'aaaa0000000000000000000000000001'
@@ -18,7 +18,9 @@ module SLA
     CHANGING_ID = 'aaaa0000000000000000000000000003'
     PR_URL = 'https://github.com/kylesnowschwartz/superset/pull/9'
     GREEN_RUN = { status: 'completed', conclusion: 'success', completed_at: '2026-09-02T08:44:00Z' }.freeze
-    RED_RUN = { status: 'completed', conclusion: 'failure', completed_at: '2026-09-02T08:50:00Z' }.freeze
+    RED_RUN = { status: 'completed', conclusion: 'failure', completed_at: '2026-09-02T08:50:00Z', name: 'test-sqlite',
+                details_url: 'https://github.com/kylesnowschwartz/superset/actions/runs/1/job/2',
+                output: { summary: "E   ImportError: cannot import name 'escape' from 'flask'" } }.freeze
     PENDING_RUN = { status: 'in_progress', conclusion: nil, completed_at: nil }.freeze
 
     # Records every pr_opened call.
@@ -44,32 +46,44 @@ module SLA
                              notifier: @notifier, github: @github, log: Logger.new(@log_io))
     end
 
-    def stub_pr_status(repo, number, sha:, state: 'open', merged: false, merged_at: nil, check_runs: [])
+    def stub_pr_status(repo, number, sha:, state: 'open', merged: false, merged_at: nil, check_runs: [],
+                       branch: 'fix/urllib3-sla-8')
       stub_request(:get, "https://api.github.com/repos/#{repo}/pulls/#{number}")
         .to_return(status: 200, body: { number: number, state: state, merged: merged, merged_at: merged_at,
-                                        mergeable: true, head: { sha: sha } }.to_json, headers: JSON_HEADER)
+                                        mergeable: true, head: { sha: sha, ref: branch } }.to_json,
+                   headers: JSON_HEADER)
       stub_request(:get, "https://api.github.com/repos/#{repo}/commits/#{sha}/check-runs")
         .with(query: { per_page: '100' })
-        .to_return(status: 200, body: { check_runs: check_runs }.to_json, headers: JSON_HEADER)
+        .to_return(status: 200, body: { total_count: check_runs.size, check_runs: check_runs }.to_json,
+                   headers: JSON_HEADER)
     end
 
-    # A closed (settled) row whose pull request is already known, as the watch
+    # Stubs the session's messages endpoint and collects every message text
+    # posted to it in @messages, whether or not Devin accepted it.
+    def stub_message(session_id, status: 200)
+      @messages ||= []
+      stub_request(:post, "#{SESSIONS_URL}/#{session_id}/messages")
+        .with { |request| @messages << JSON.parse(request.body).fetch('message') }
+        .to_return(status: status, body: status == 200 ? '{}' : '{"detail":"unavailable"}', headers: JSON_HEADER)
+    end
+
+    # A closed (reported) row whose pull request is already known, as the watch
     # loop finds it.
-    def record_settled_pr_session(issue_number, **columns)
-      row_id = record_session(issue_number, SETTLED_ID)
+    def record_reported_pr_session(issue_number, **columns)
+      row_id = record_session(issue_number, REPORTED_ID)
       DB[:sessions].where(id: row_id).update({ pr_url: PR_URL, pr_state: 'open', pr_notified_at: Time.now.utc,
-                                               outcome: 'settled' }.merge(columns))
+                                               outcome: 'reported' }.merge(columns))
       row_id
     end
 
-    def test_settled_session_with_pull_request_and_output_is_recorded_and_notified_once
-      row_id = record_session(8, SETTLED_ID)
-      stub_session(SETTLED_ID, fixture('get_session_settled_with_pr_and_output.json'))
+    def test_reported_session_with_pull_request_and_output_is_recorded_and_notified_once
+      row_id = record_session(8, REPORTED_ID)
+      stub_session(REPORTED_ID, fixture('get_session_reported_with_pr_and_output.json'))
       stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3', check_runs: [GREEN_RUN])
 
       summary = @tracker.poll_once
 
-      assert_equal({ polled: 1, settled: 1, stalled: 0, notified: 1, errors: 0 }, summary)
+      assert_equal({ polled: 1, reported: 1, stalled: 0, notified: 1, errors: 0 }, summary)
       row = DB[:sessions].first(id: row_id)
 
       assert_equal 'running', row[:status]
@@ -78,7 +92,7 @@ module SLA
       assert_in_delta Time.now.utc, row[:last_polled_at], 5
       assert_equal 'https://github.com/kylesnowschwartz/superset/pull/9', row[:pr_url]
       assert_equal 'open', row[:pr_state]
-      assert_equal 'settled', row[:outcome]
+      assert_equal 'reported', row[:outcome]
       assert_equal Time.at(1_788_342_608).utc, row[:finished_at]
       assert_in_delta Time.now.utc, row[:pr_notified_at], 5
       assert_equal 'success', row[:pr_checks]
@@ -94,12 +108,12 @@ module SLA
       finding_row, session_row = @notifier.calls.first
 
       assert_equal 8, finding_row[:issue_number]
-      assert_equal SETTLED_ID, session_row[:devin_session_id]
+      assert_equal REPORTED_ID, session_row[:devin_session_id]
       assert_equal 'https://github.com/kylesnowschwartz/superset/pull/9', session_row[:pr_url]
       refute_match(/WARN|ERROR/, @log_io.string)
 
-      assert_equal({ polled: 0, settled: 0, stalled: 0, notified: 0, errors: 0 }, @tracker.poll_once)
-      assert_requested :get, "#{SESSIONS_URL}/#{SETTLED_ID}", times: 1
+      assert_equal({ polled: 0, reported: 0, stalled: 0, notified: 0, errors: 0 }, @tracker.poll_once)
+      assert_requested :get, "#{SESSIONS_URL}/#{REPORTED_ID}", times: 1
       assert_requested :get, %r{api\.github\.com/repos/kylesnowschwartz/superset/pulls/9}, times: 1
       assert_equal 1, @notifier.calls.size
     end
@@ -121,11 +135,11 @@ module SLA
       assert_equal old_checks_at.to_i, row[:pr_checks_at].to_i
     end
 
-    def test_a_settled_row_with_pending_checks_is_watched_until_they_pass
-      row_id = record_settled_pr_session(8, pr_checks: 'pending', pr_checks_at: Time.now.utc - 60)
+    def test_a_reported_row_with_pending_checks_is_watched_until_they_pass
+      row_id = record_reported_pr_session(8, pr_checks: 'pending', pr_checks_at: Time.now.utc - 60)
       stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3', check_runs: [PENDING_RUN])
 
-      assert_equal({ polled: 0, settled: 0, stalled: 0, notified: 0, errors: 0 }, @tracker.poll_once)
+      assert_equal({ polled: 0, reported: 0, stalled: 0, notified: 0, errors: 0 }, @tracker.poll_once)
       assert_equal 'pending', DB[:sessions].first(id: row_id)[:pr_checks]
 
       stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3', check_runs: [GREEN_RUN])
@@ -144,8 +158,8 @@ module SLA
       assert_empty @notifier.calls
     end
 
-    def test_a_settled_row_without_check_runs_yet_is_watched_until_they_appear
-      row_id = record_settled_pr_session(8)
+    def test_a_reported_row_without_check_runs_yet_is_watched_until_they_appear
+      row_id = record_reported_pr_session(8)
       stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3', check_runs: [])
 
       @tracker.poll_once
@@ -155,6 +169,7 @@ module SLA
       assert_in_delta Time.now.utc, row[:pr_checks_at], 5
 
       stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3', check_runs: [RED_RUN])
+      stub_message(REPORTED_ID)
       @tracker.poll_once
       row = DB[:sessions].first(id: row_id)
 
@@ -163,8 +178,151 @@ module SLA
       assert_match(/INFO.*issue #8: pull request #{PR_URL} checks are red/, @log_io.string)
     end
 
+    def test_red_checks_send_the_failed_runs_to_the_session_once_per_commit
+      row_id = record_reported_pr_session(8, pr_checks: 'pending', pr_checks_at: Time.now.utc - 60)
+      stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3', check_runs: [GREEN_RUN, RED_RUN])
+      stub_message(REPORTED_ID)
+
+      assert_equal({ polled: 0, reported: 0, stalled: 0, notified: 0, errors: 0 }, @tracker.poll_once)
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal 'failure', row[:pr_checks]
+      assert_equal 'a1b2c3', row[:pr_head_sha]
+      assert_equal 'a1b2c3', row[:ci_repair_sha]
+      assert_equal 1, row[:ci_repairs]
+      message = @messages.fetch(0)
+
+      assert_includes message, "pull request #{PR_URL} (branch `fix/urllib3-sla-8`)\nare failing at commit a1b2c3."
+      assert_includes message, "- `test-sqlite` — #{RED_RUN[:details_url]}\n\n  ```\n  " \
+                               "E   ImportError: cannot import name 'escape' from 'flask'\n  ```"
+      refute_includes message, 'success'
+      assert_includes message, 'Work on the same branch, `fix/urllib3-sla-8`'
+      assert_match "INFO -- : tracker issue #8: asked session #{REPORTED_ID} to repair 1 failed check run(s) " \
+                   'at a1b2c3 (repair 1 of 2)', @log_io.string
+
+      @tracker.poll_once
+      @tracker.poll_once
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal 1, @messages.size
+      assert_equal 1, row[:ci_repairs]
+      assert_requested :get, %r{api\.github\.com/repos/kylesnowschwartz/superset/commits/a1b2c3/check-runs}, times: 3
+      refute_match(/WARN|ERROR/, @log_io.string)
+    end
+
+    def test_red_checks_wait_for_a_working_session_to_stop_before_it_is_asked_to_repair
+      row_id = record_session(8, WORKING_ID)
+      stub_session(WORKING_ID, hand_written(WORKING_ID, status: 'running', status_detail: 'working',
+                                                        pull_requests: [{ 'pr_url' => PR_URL, 'pr_state' => 'open' }]))
+      stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3', check_runs: [RED_RUN])
+      stub_message(WORKING_ID)
+
+      @tracker.poll_once
+      @tracker.poll_once
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal 'failure', row[:pr_checks]
+      assert_equal 'a1b2c3', row[:pr_head_sha]
+      assert_nil row[:ci_repair_sha]
+      assert_equal 0, row[:ci_repairs]
+      assert_nil row[:outcome]
+      assert_empty @messages
+      deferrals = @log_io.string.scan("INFO -- : tracker issue #8: pull request #{PR_URL} checks are red at a1b2c3 " \
+                                      "while session #{WORKING_ID} is still working; the repair waits until it stops")
+
+      assert_equal 1, deferrals.size
+
+      stub_session(WORKING_ID, hand_written(WORKING_ID, status: 'running', status_detail: 'waiting_for_user',
+                                                        pull_requests: [{ 'pr_url' => PR_URL, 'pr_state' => 'open' }]))
+      summary = @tracker.poll_once
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal({ polled: 1, reported: 1, stalled: 0, notified: 0, errors: 0 }, summary)
+      assert_equal 'a1b2c3', row[:ci_repair_sha]
+      assert_equal 1, row[:ci_repairs]
+      assert_equal 1, @messages.size
+      assert_match(/repair 1 of 2/, @log_io.string)
+    end
+
+    def test_a_new_red_commit_gets_a_second_repair_and_the_third_is_left_for_a_human
+      row_id = record_reported_pr_session(8, pr_checks: 'failure', pr_checks_at: Time.now.utc - 60,
+                                             pr_head_sha: 'a1b2c3', ci_repair_sha: 'a1b2c3', ci_repairs: 1)
+      stub_message(REPORTED_ID)
+      stub_pr_status('kylesnowschwartz/superset', 9, sha: 'b2c3d4', check_runs: [PENDING_RUN])
+
+      @tracker.poll_once
+
+      assert_equal 'pending', DB[:sessions].first(id: row_id)[:pr_checks]
+      assert_empty @messages
+
+      stub_pr_status('kylesnowschwartz/superset', 9, sha: 'b2c3d4', check_runs: [RED_RUN])
+      @tracker.poll_once
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal 'b2c3d4', row[:ci_repair_sha]
+      assert_equal 2, row[:ci_repairs]
+      assert_includes @messages.fetch(0), 'are failing at commit b2c3d4.'
+      assert_match(/repair 2 of 2/, @log_io.string)
+
+      stub_pr_status('kylesnowschwartz/superset', 9, sha: 'c3d4e5', check_runs: [RED_RUN])
+      @tracker.poll_once
+      @tracker.poll_once
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal 1, @messages.size
+      assert_equal 'failure', row[:pr_checks]
+      assert_equal 'c3d4e5', row[:pr_head_sha]
+      assert_equal 'b2c3d4', row[:ci_repair_sha]
+      assert_equal 2, row[:ci_repairs]
+      warnings = @log_io.string.scan("WARN -- : tracker issue #8: pull request #{PR_URL} checks are red at c3d4e5 " \
+                                     'after 2 repairs; leaving it for a human')
+
+      assert_equal 1, warnings.size
+    end
+
+    def test_a_failed_repair_message_is_counted_and_retried_next_round
+      row_id = record_reported_pr_session(8, pr_checks: 'pending', pr_checks_at: Time.now.utc - 60)
+      stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3', check_runs: [RED_RUN])
+      stub_message(REPORTED_ID, status: 503)
+
+      summary = @tracker.poll_once
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal({ polled: 0, reported: 0, stalled: 0, notified: 0, errors: 1 }, summary)
+      assert_equal 'failure', row[:pr_checks]
+      assert_nil row[:ci_repair_sha]
+      assert_equal 0, row[:ci_repairs]
+      assert_match(/ERROR.*session #{REPORTED_ID}: SLA::DevinAPIError: Devin API returned 503/, @log_io.string)
+
+      stub_message(REPORTED_ID)
+      summary = @tracker.poll_once
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal 0, summary[:errors]
+      assert_equal 'a1b2c3', row[:ci_repair_sha]
+      assert_equal 1, row[:ci_repairs]
+      assert_equal 2, @messages.size
+    end
+
+    def test_red_checks_seen_during_an_open_poll_message_the_session_before_it_settles
+      row_id = record_session(8, REPORTED_ID)
+      stub_session(REPORTED_ID, fixture('get_session_reported_with_pr_and_output.json'))
+      stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3', check_runs: [RED_RUN])
+      stub_message(REPORTED_ID)
+
+      summary = @tracker.poll_once
+      row = DB[:sessions].first(id: row_id)
+
+      assert_equal({ polled: 1, reported: 1, stalled: 0, notified: 1, errors: 0 }, summary)
+      assert_equal 'reported', row[:outcome]
+      assert_equal 'a1b2c3', row[:ci_repair_sha]
+      assert_equal 1, row[:ci_repairs]
+      assert_equal 1, @messages.size
+      assert_equal 1, @notifier.calls.size
+    end
+
     def test_a_merged_pull_request_records_the_merge_time_and_state_and_stops_being_watched
-      row_id = record_settled_pr_session(8, pr_checks: 'failure', pr_checks_at: Time.now.utc - 60)
+      row_id = record_reported_pr_session(8, pr_checks: 'failure', pr_checks_at: Time.now.utc - 60)
       stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3', state: 'closed', merged: true,
                                                      merged_at: '2026-09-02T09:00:00Z', check_runs: [RED_RUN])
 
@@ -174,14 +332,16 @@ module SLA
       assert_equal 'merged', row[:pr_state]
       assert_equal Time.utc(2026, 9, 2, 9, 0, 0), row[:pr_merged_at]
       assert_equal 'failure', row[:pr_checks]
+      assert_equal 0, row[:ci_repairs]
 
       @tracker.poll_once
 
       assert_requested :get, %r{api\.github\.com/repos/kylesnowschwartz/superset/pulls/9}, times: 1
+      assert_not_requested :post, /api\.devin\.ai/
     end
 
     def test_a_pull_request_closed_without_merging_stops_being_watched
-      row_id = record_settled_pr_session(8, pr_checks: 'pending', pr_checks_at: Time.now.utc - 60)
+      row_id = record_reported_pr_session(8, pr_checks: 'pending', pr_checks_at: Time.now.utc - 60)
       stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3', state: 'closed', check_runs: [PENDING_RUN])
 
       @tracker.poll_once
@@ -196,34 +356,34 @@ module SLA
     end
 
     def test_a_github_error_while_checking_the_pull_request_is_counted_and_leaves_the_row_alone
-      row_id = record_settled_pr_session(8, pr_checks: 'pending', pr_checks_at: Time.now.utc - 60)
+      row_id = record_reported_pr_session(8, pr_checks: 'pending', pr_checks_at: Time.now.utc - 60)
       stub_request(:get, 'https://api.github.com/repos/kylesnowschwartz/superset/pulls/9')
         .to_return(status: 502, body: '{"message":"bad gateway"}', headers: JSON_HEADER)
 
       summary = @tracker.poll_once
 
-      assert_equal({ polled: 0, settled: 0, stalled: 0, notified: 0, errors: 1 }, summary)
+      assert_equal({ polled: 0, reported: 0, stalled: 0, notified: 0, errors: 1 }, summary)
       assert_equal 'pending', DB[:sessions].first(id: row_id)[:pr_checks]
-      assert_match(/ERROR.*session #{SETTLED_ID}: SLA::GitHubAPIError/, @log_io.string)
+      assert_match(/ERROR.*session #{REPORTED_ID}: SLA::GitHubAPIError/, @log_io.string)
     end
 
     def test_a_github_error_during_an_open_poll_still_notifies_and_closes_the_session
-      row_id = record_session(8, SETTLED_ID)
-      stub_session(SETTLED_ID, fixture('get_session_settled_with_pr_and_output.json'))
+      row_id = record_session(8, REPORTED_ID)
+      stub_session(REPORTED_ID, fixture('get_session_reported_with_pr_and_output.json'))
       stub_request(:get, 'https://api.github.com/repos/kylesnowschwartz/superset/pulls/9')
         .to_return(status: 502, body: '{"message":"bad gateway"}', headers: JSON_HEADER)
 
       summary = @tracker.poll_once
       row = DB[:sessions].first(id: row_id)
 
-      assert_equal({ polled: 1, settled: 1, stalled: 0, notified: 1, errors: 1 }, summary)
-      assert_equal 'settled', row[:outcome]
+      assert_equal({ polled: 1, reported: 1, stalled: 0, notified: 1, errors: 1 }, summary)
+      assert_equal 'reported', row[:outcome]
       assert_nil row[:pr_checks]
       assert_equal 1, @notifier.calls.size
     end
 
     def test_a_pull_request_url_off_github_is_an_error_not_a_crash
-      record_settled_pr_session(8, pr_url: 'https://gitlab.com/x/y/-/merge_requests/1')
+      record_reported_pr_session(8, pr_url: 'https://gitlab.com/x/y/-/merge_requests/1')
 
       summary = @tracker.poll_once
 
@@ -234,7 +394,7 @@ module SLA
     end
 
     def test_without_a_github_client_pull_requests_are_never_looked_at
-      record_settled_pr_session(8, pr_checks: 'pending', pr_checks_at: Time.now.utc - 60)
+      record_reported_pr_session(8, pr_checks: 'pending', pr_checks_at: Time.now.utc - 60)
       row_id = record_session(2, SUSPENDED_ID)
       stub_session(SUSPENDED_ID, fixture('get_session_suspended_with_pr.json'))
       tracker = Tracker.new(db: DB, devin: DevinClient.new(api_key: 'test-key', org_id: ORG_ID),
@@ -243,8 +403,8 @@ module SLA
       summary = tracker.poll_once
       row = DB[:sessions].first(id: row_id)
 
-      assert_equal({ polled: 1, settled: 1, stalled: 0, notified: 1, errors: 0 }, summary)
-      assert_equal 'settled', row[:outcome]
+      assert_equal({ polled: 1, reported: 1, stalled: 0, notified: 1, errors: 0 }, summary)
+      assert_equal 'reported', row[:outcome]
       assert_nil row[:pr_checks]
       assert_not_requested :get, /api\.github\.com/
     end
@@ -255,10 +415,10 @@ module SLA
 
       summary = @tracker.poll_once
 
-      assert_equal({ polled: 1, settled: 1, stalled: 0, notified: 0, errors: 0 }, summary)
+      assert_equal({ polled: 1, reported: 1, stalled: 0, notified: 0, errors: 0 }, summary)
       row = DB[:sessions].first(id: row_id)
 
-      assert_equal 'settled', row[:outcome]
+      assert_equal 'reported', row[:outcome]
       assert_equal Time.at(1_788_336_350).utc, row[:finished_at]
       assert_nil row[:structured_output]
       assert_nil row[:pr_url]
@@ -272,21 +432,21 @@ module SLA
       assert_empty @notifier.calls
     end
 
-    def test_suspended_session_with_pull_request_is_settled_and_notified_once
+    def test_suspended_session_with_pull_request_is_reported_and_notified_once
       row_id = record_session(2, SUSPENDED_ID)
       stub_session(SUSPENDED_ID, fixture('get_session_suspended_with_pr.json'))
       stub_pr_status('kylesnowschwartz/superset', 2, sha: 'd4e5f6', check_runs: [GREEN_RUN])
 
       summary = @tracker.poll_once
 
-      assert_equal({ polled: 1, settled: 1, stalled: 0, notified: 1, errors: 0 }, summary)
+      assert_equal({ polled: 1, reported: 1, stalled: 0, notified: 1, errors: 0 }, summary)
       row = DB[:sessions].first(id: row_id)
 
       assert_equal 'suspended', row[:status]
       assert_equal 'inactivity', row[:status_detail]
       assert_equal 'https://github.com/kylesnowschwartz/superset/pull/2', row[:pr_url]
       assert_equal 'open', row[:pr_state]
-      assert_equal 'settled', row[:outcome]
+      assert_equal 'reported', row[:outcome]
       assert_equal 'success', row[:pr_checks]
       assert_nil row[:structured_output]
       assert_nil row[:structured_output_invalid]
@@ -300,7 +460,7 @@ module SLA
 
       summary = @tracker.poll_once
 
-      assert_equal({ polled: 1, settled: 0, stalled: 0, notified: 0, errors: 0 }, summary)
+      assert_equal({ polled: 1, reported: 0, stalled: 0, notified: 0, errors: 0 }, summary)
       row = DB[:sessions].first(id: row_id)
 
       assert_nil row[:outcome]
@@ -311,7 +471,7 @@ module SLA
       assert_empty @notifier.calls
       refute_match(/WARN|ERROR/, @log_io.string)
 
-      assert_equal({ polled: 1, settled: 0, stalled: 0, notified: 0, errors: 0 }, @tracker.poll_once)
+      assert_equal({ polled: 1, reported: 0, stalled: 0, notified: 0, errors: 0 }, @tracker.poll_once)
       assert_requested :get, "#{SESSIONS_URL}/#{WORKING_ID}", times: 2
     end
 
@@ -321,7 +481,7 @@ module SLA
 
       summary = @tracker.poll_once
 
-      assert_equal({ polled: 1, settled: 0, stalled: 1, notified: 0, errors: 0 }, summary)
+      assert_equal({ polled: 1, reported: 0, stalled: 1, notified: 0, errors: 0 }, summary)
       row = DB[:sessions].first(id: row_id)
 
       assert_equal 'stalled', row[:outcome]
@@ -329,7 +489,7 @@ module SLA
       assert_match(%r{WARN.*issue #6: session #{STALLED_ID} stopped \(suspended/inactivity\)}, @log_io.string)
       assert_empty @notifier.calls
 
-      assert_equal({ polled: 0, settled: 0, stalled: 0, notified: 0, errors: 0 }, @tracker.poll_once)
+      assert_equal({ polled: 0, reported: 0, stalled: 0, notified: 0, errors: 0 }, @tracker.poll_once)
       assert_requested :get, "#{SESSIONS_URL}/#{STALLED_ID}", times: 1
     end
 
@@ -358,16 +518,16 @@ module SLA
 
     def test_an_error_for_one_session_does_not_stop_the_others
       failing_id = record_session(5, WORKING_ID)
-      settled_id = record_session(8, SETTLED_ID)
+      reported_id = record_session(8, REPORTED_ID)
       stub_request(:get, "#{SESSIONS_URL}/#{WORKING_ID}").to_return(status: 503, body: '{"detail":"unavailable"}',
                                                                     headers: JSON_HEADER)
-      stub_session(SETTLED_ID, fixture('get_session_settled_with_pr_and_output.json'))
+      stub_session(REPORTED_ID, fixture('get_session_reported_with_pr_and_output.json'))
       stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3', check_runs: [GREEN_RUN])
 
       summary = @tracker.poll_once
 
-      assert_equal({ polled: 2, settled: 1, stalled: 0, notified: 1, errors: 1 }, summary)
-      assert_equal 'settled', DB[:sessions].first(id: settled_id)[:outcome]
+      assert_equal({ polled: 2, reported: 1, stalled: 0, notified: 1, errors: 1 }, summary)
+      assert_equal 'reported', DB[:sessions].first(id: reported_id)[:outcome]
       failing = DB[:sessions].first(id: failing_id)
 
       assert_nil failing[:outcome]
@@ -377,8 +537,8 @@ module SLA
     end
 
     def test_a_failed_notification_clears_the_timestamp_and_leaves_the_row_open
-      row_id = record_session(8, SETTLED_ID)
-      stub_session(SETTLED_ID, fixture('get_session_settled_with_pr_and_output.json'))
+      row_id = record_session(8, REPORTED_ID)
+      stub_session(REPORTED_ID, fixture('get_session_reported_with_pr_and_output.json'))
       stub_pr_status('kylesnowschwartz/superset', 9, sha: 'a1b2c3', check_runs: [GREEN_RUN])
       seen = []
       failing = Object.new
@@ -391,7 +551,7 @@ module SLA
 
       summary = tracker.poll_once
 
-      assert_equal({ polled: 1, settled: 0, stalled: 0, notified: 0, errors: 1 }, summary)
+      assert_equal({ polled: 1, reported: 0, stalled: 0, notified: 0, errors: 1 }, summary)
       assert_in_delta Time.now.utc, seen.fetch(0), 5
       row = DB[:sessions].first(id: row_id)
 
@@ -399,14 +559,14 @@ module SLA
       assert_nil row[:pr_notified_at]
       assert_equal 'https://github.com/kylesnowschwartz/superset/pull/9', row[:pr_url]
       assert_match(/ERROR.*issue #8: posting the pull request comment failed: SLA::GitHubAPIError/, @log_io.string)
-      assert_match(/ERROR.*session #{SETTLED_ID}: SLA::GitHubAPIError/, @log_io.string)
+      assert_match(/ERROR.*session #{REPORTED_ID}: SLA::GitHubAPIError/, @log_io.string)
     end
 
     def test_rows_without_a_devin_session_id_are_skipped
       finding_id = record_finding(9)
       DB[:sessions].insert(finding_id: finding_id, status: 'dispatching', last_polled_at: Time.now.utc)
 
-      assert_equal({ polled: 0, settled: 0, stalled: 0, notified: 0, errors: 0 }, @tracker.poll_once)
+      assert_equal({ polled: 0, reported: 0, stalled: 0, notified: 0, errors: 0 }, @tracker.poll_once)
       assert_not_requested :get, /api\.devin\.ai/
     end
 
@@ -421,7 +581,7 @@ module SLA
       thread.kill
       thread.join
 
-      assert_equal [{ polled: 1, settled: 0, stalled: 0, notified: 0, errors: 0 }], summaries
+      assert_equal [{ polled: 1, reported: 0, stalled: 0, notified: 0, errors: 0 }], summaries
       assert_requested :get, "#{SESSIONS_URL}/#{WORKING_ID}", times: 1
     end
 

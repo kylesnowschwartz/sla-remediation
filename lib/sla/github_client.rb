@@ -15,6 +15,7 @@ module SLA
     ISSUES_PER_PAGE = 100
     PULLS_PER_PAGE = 100
     CHECK_RUNS_PER_PAGE = 100
+    CHECK_RUN_OUTPUT_LINES = 40
 
     CHECK_RUN_FAILURE_CONCLUSIONS = %w[failure timed_out cancelled action_required].freeze
     CHECK_RUN_SUCCESS_CONCLUSIONS = %w[success neutral skipped].freeze
@@ -29,10 +30,16 @@ module SLA
     # "success" (every completed run succeeded, was neutral, or was skipped),
     # or "none" (the head commit has no check runs at all). `checks_at` is when
     # the last run completed for "success" and "failure", and nil otherwise.
+    # `check_runs` is every run on the head commit as GitHub returned it, so
+    # the failed ones can be read (failed_check_runs) without a second fetch.
     # Only the Checks API is read, so commit statuses posted by CI systems
     # outside GitHub Actions are not seen.
-    PullRequestStatus = Struct.new(:head_sha, :state, :mergeable, :merged, :merged_at, :checks, :checks_at,
-                                   keyword_init: true)
+    PullRequestStatus = Struct.new(:head_sha, :head_branch, :state, :mergeable, :merged, :merged_at, :checks,
+                                   :checks_at, :check_runs, keyword_init: true)
+    # One failed check run: its name, the page GitHub shows for it, and the
+    # first CHECK_RUN_OUTPUT_LINES lines of its output summary (or text when
+    # there is no summary), or nil when the run reported no output.
+    FailedCheckRun = Struct.new(:name, :details_url, :output, keyword_init: true)
 
     # Without a token the client is anonymous, which is enough for the public
     # advisories endpoint but not for reading or filing issues.
@@ -118,16 +125,25 @@ module SLA
     end
 
     # The pull request's head sha, open/closed and mergeable/merged state, and
-    # the combined result of the check runs on that sha.
+    # the combined result of every check run on that sha.
     def pull_request_status(repo, number)
       pull = request(:get, "/repos/#{repo}/pulls/#{number}")
       sha = pull.dig('head', 'sha')
-      runs = request(:get, "/repos/#{repo}/commits/#{sha}/check-runs",
-                     params: { per_page: CHECK_RUNS_PER_PAGE }).fetch('check_runs')
+      runs = check_runs(repo, sha)
       checks = check_state(runs)
-      PullRequestStatus.new(head_sha: sha, state: pull['state'], mergeable: pull['mergeable'],
-                            merged: pull['merged'], merged_at: parse_time(pull['merged_at']),
-                            checks: checks, checks_at: checks_completed_at(runs, checks))
+      PullRequestStatus.new(head_sha: sha, head_branch: pull.dig('head', 'ref'), state: pull['state'],
+                            mergeable: pull['mergeable'], merged: pull['merged'],
+                            merged_at: parse_time(pull['merged_at']),
+                            checks: checks, checks_at: checks_completed_at(runs, checks), check_runs: runs)
+    end
+
+    # The runs among the status's check runs that failed, timed out, were
+    # cancelled, or need action, with enough of each one's output to see what
+    # went wrong. Job logs are not downloaded; the details URL leads to them.
+    def failed_check_runs(status)
+      status.check_runs.select(&method(:failed_run?)).map do |run|
+        FailedCheckRun.new(name: run['name'], details_url: run['details_url'], output: check_run_output(run))
+      end
     end
 
     # Whether the repository has a branch of that name; the ref endpoint answers 404 when it does not.
@@ -168,6 +184,26 @@ module SLA
                       head_branch: item.dig('head', 'ref'))
     end
 
+    # Every check run on the commit. The endpoint pages at CHECK_RUNS_PER_PAGE
+    # and reports the whole count, so pages are read until that many runs are in
+    # hand (or a page comes back empty, should the count be off).
+    def check_runs(repo, sha)
+      path = "/repos/#{repo}/commits/#{sha}/check-runs"
+      runs = []
+      (1..).each do |page|
+        body = request(:get, path, params: check_runs_params(page))
+        batch = body.fetch('check_runs')
+        runs.concat(batch)
+        return runs if batch.empty? || runs.size >= body.fetch('total_count')
+      end
+    end
+
+    def check_runs_params(page)
+      params = { per_page: CHECK_RUNS_PER_PAGE }
+      params[:page] = page if page > 1
+      params
+    end
+
     # rubocop:disable Metrics/CyclomaticComplexity -- four states decided in order; splitting further would
     # scatter one decision table across more methods than it clarifies.
     def check_state(runs)
@@ -189,6 +225,11 @@ module SLA
 
     def passed_run?(run)
       CHECK_RUN_SUCCESS_CONCLUSIONS.include?(run['conclusion'])
+    end
+
+    def check_run_output(run)
+      text = [run.dig('output', 'summary'), run.dig('output', 'text')].find { |value| !value.to_s.strip.empty? }
+      text.lines.first(CHECK_RUN_OUTPUT_LINES).join.chomp if text
     end
 
     # When the last run finished, which is when the combined result was decided.

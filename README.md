@@ -11,24 +11,26 @@ this service makes that deadline visible and hands routine fixes to Devin ([deci
 
 - `bin/scan` finds vulnerable pins and files labelled issues containing a fenced `yaml` finding block.
 - The GitHub webhook verifies its signature, reads `SECURITY-SLA.md`, and records the finding and due date in SQLite.
-- The dispatcher starts one Devin session; the tracker follows its result, pull request, checks, and SLA outcome.
+- The dispatcher starts one Devin session; the tracker follows its result, pull request, checks, and SLA outcome, and sends CI failures back to the session.
 
 [Behavioural specifications](docs/spec/README.md) state exactly what each slice promises. [Architecture](docs/architecture.md) shows the actors and data flow.
 
+## Try it without credentials
+
+The status page can be filled from a captured run, with no GitHub token, webhook secret, or Devin key. With Docker and the Compose plugin installed:
+
+```sh
+docker compose up app --build --detach --wait
+docker compose run --rm app bin/demo-load
+```
+
+Open http://localhost:4567. This is the status page from a real run against `kylesnowschwartz/superset`, with every timestamp shifted so the capture happened at the moment you loaded it; the intervals between events are the run's own, so every SLA word is the one the run earned and the page ages from here as a live run would. `SLA_REPO` can stay unset. Expand a row to see the session's report and the pull request's checks. Nothing is read from GitHub and no Devin session is started; the tracker is left out because the loaded sessions are already closed.
+
+`bin/demo-load` refuses to write into a database that already has findings or sessions; `bin/demo-load --replace` empties both tables first. The fixture is `db/fixtures/demo.json`, written by `bin/demo-export`; nothing in it is secret. See [Demo fixture](docs/spec/demo-fixture.md).
+
 ## Run with Docker
 
-You need Docker with Compose (`docker compose version`), plus:
-
-- A GitHub fork with `SECURITY-SLA.md` and `requirements/base.txt`; the demo uses `kylesnowschwartz/superset`.
-- A Devin API v3 service-user key and the `org-...` organization ID. In Devin's organization settings, create a service user and an API key for it; personal keys do not work with v3.
-- A GitHub token with write access to contents, issues, and pull requests on the fork. A fine-grained token scoped to that repository is enough.
-- A smee channel. Create one with `curl -sI https://smee.io/new | grep -i location` and use the `Location` URL.
-
-On the fork, open Settings → Webhooks → Add webhook. Set the payload URL to the smee URL, content type to `application/json`, secret to a random `SLA_WEBHOOK_SECRET`, and events to "Issues" only.
-
-### Start
-
-Export the configuration below, or create the ignored `.env` file:
+You need Docker with the Compose plugin (`docker compose version`) and a value for each variable in `.env.example`; [Run it against your own fork](#run-it-against-your-own-fork) says where each one comes from. Copy `.env.example` to the ignored `.env` and fill it in; Compose reads it for the containers' environment and for `${SMEE_URL}` in the compose file.
 
 ```sh
 cp .env.example .env
@@ -43,7 +45,24 @@ docker compose run --rm app bin/demo-reset
 docker compose run --rm app bin/dispatch <issue_number>
 ```
 
-The web server and tracker share SQLite on the `sla-db` volume. `docker compose down -v` deletes it.
+The web server and tracker share SQLite on the `sla-db` volume. `docker compose down -v` deletes it. The `app` service also mounts `db/fixtures/`, so a fixture written inside the container lands in the working tree.
+
+## Run it against your own fork
+
+1. Fork `kylesnowschwartz/superset`, not `apache/superset`, so that `SECURITY-SLA.md`, the `sla-remediation` and `policy` labels, and the seeded pins in `requirements/base.txt` come along. Nothing is ever opened against `apache/superset`.
+2. Create a fine-grained GitHub personal access token scoped to the fork with read and write access to contents, issues, and pull requests. This is `SLA_GITHUB_TOKEN`. Without it the first `SECURITY-SLA.md` read counts against GitHub's anonymous rate limit and can fail on a shared network.
+3. Get a Devin API v3 *service* key and the `org-...` organization ID: in Devin's organization settings, create a service user and an API key for it. Personal keys do not work with v3. These are `DEVIN_SERVICE_API_KEY_V3` and `DEVIN_ORG_ID`.
+4. Create a smee channel with `curl -sI https://smee.io/new | grep -i location`; the `Location` URL is `SMEE_URL`. On the fork, open Settings → Webhooks → Add webhook. Set the payload URL to that URL, content type to `application/json`, secret to a random string you keep as `SLA_WEBHOOK_SECRET`, and events to "Issues" only.
+5. Set `SLA_REPO` to the fork's `owner/name` in `.env`, along with the values above, and `SLA_AUTO_DISPATCH=true` if a labelled issue should start a Devin session on its own.
+6. Start the services, put the fork in its starting state, and scan it:
+
+   ```sh
+   docker compose up --build --detach --wait
+   docker compose run --rm app bin/demo-reset
+   docker compose run --rm app bin/scan
+   ```
+
+The scan files one issue per vulnerable pin, the webhook reaches the service through smee, each finding starts a Devin session, and http://localhost:4567 follows the pull requests as they open and their checks run.
 
 ## Run without Docker
 
@@ -64,7 +83,7 @@ npx --yes smee-client --url "$SMEE_URL" --target http://localhost:4567/webhooks/
 
 ## Configuration
 
-The shell or `.env` supplies these variables; `.envrc` loads them through direnv.
+The shell or `.env` supplies these variables.
 
 - `DEVIN_SERVICE_API_KEY_V3`: Devin v3 service-user key for creating and polling sessions.
 - `DEVIN_ORG_ID`: organization in which sessions are created.
@@ -87,14 +106,17 @@ The demo targets `kylesnowschwartz/superset`; it never changes `apache/superset`
 bin/demo-reset && bin/scan
 ```
 
+After a good run, before the reset, `bin/demo-export` writes the findings and sessions to `db/fixtures/demo.json` for [Try it without credentials](#try-it-without-credentials); under Compose that is `docker compose run --rm app bin/demo-export`. It refuses to write from an empty database.
+
 ## Service slices
 
 - [Scan](docs/spec/scan.md): audit pins and file one issue per vulnerable package.
 - [Receive](docs/spec/receive.md): verify a webhook and record its finding and due date.
-- [Dispatch](docs/spec/dispatch.md): create at most one Devin session per fixable finding; `bin/dispatch <issue_number> --dry-run` prints its prompt and request.
-- [Track](docs/spec/track.md): poll sessions every 15 seconds, validate `schemas/remediation_result.json`, follow checks, and comment once.
+- [Dispatch](docs/spec/dispatch.md): create at most one resumable Devin session per fixable finding; `bin/dispatch <issue_number> --dry-run` prints its prompt and request.
+- [Track](docs/spec/track.md): poll sessions every 15 seconds, validate `schemas/remediation_result.json`, follow checks, comment once, and send red checks back to the session at most twice.
 - [Status page](docs/spec/status-page.md): calculate counts and the SLA state shown by `GET /`.
 - [Demo reset](docs/spec/demo-reset.md): return the fork and database to their seeded state.
+- [Demo fixture](docs/spec/demo-fixture.md): capture a run to a file and load it back, shifted to the present.
 
 ## In production
 
@@ -112,6 +134,7 @@ bin/demo-reset && bin/scan
 - [5. Detection is a script; remediation is the agent](docs/decisions/0005-deterministic-detection-agentic-remediation.md)
 - [6. We call the sessions API instead of configuring a Devin Automation](docs/decisions/0006-why-not-a-devin-automation.md)
 - [7. A smee.io channel relays GitHub webhooks to the developer's machine](docs/decisions/0007-smee-relays-webhooks-in-development.md)
+- [8. CI failures go back to the session that opened the pull request](docs/decisions/0008-ci-failures-go-back-to-the-session.md)
 
 ## Development
 

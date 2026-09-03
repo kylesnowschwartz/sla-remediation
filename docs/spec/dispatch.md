@@ -15,7 +15,7 @@ A finding becomes work for Devin exactly once: never a second session when a ses
 - **DISP-06** Dispatch creates exactly one Devin session:
   - rendered prompt, issue title as session title, target repository as its only repository
   - tags `sla-remediation` and `issue-<issue_number>`
-  - remediation result schema as structured output, ACU limit 3, `resumable` false
+  - remediation result schema as structured output, ACU limit 3, `resumable` true (so the tracker can message it later, TRACK-28)
 - **DISP-07** Writes a sessions row (id, status, detail, start, last poll), prints URL, returns `dispatched`.
 - **DISP-08** At most one sessions row per finding; a second dispatch → `already_dispatched`, no Devin call.
 - **DISP-09** Row reserved before the Devin call: a race makes one call, the loser `already_dispatched`.
@@ -64,7 +64,7 @@ A finding becomes work for Devin exactly once: never a second session when a ses
 
 - The prose of the prompt beyond the facts DISP-13 names.
 - The wording of printed lines.
-- Sending and reading messages on a session; the client supports both, no slice uses them.
+- Reading messages on a session; the client supports it, no slice uses it. Sending is the tracker's (TRACK-28).
 - What Devin does with the session; the promise ends at creating it.
 
 <details><summary>Proofs</summary>

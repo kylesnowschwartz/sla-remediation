@@ -1,0 +1,45 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Reads the fixture written by bin/demo-export into the database, shifting
+# every timestamp forward by the same amount so the export time lands at load
+# time; every interval between events is kept, so the status page reads
+# exactly as it did when the fixture was captured. The loaded
+# sessions are already closed, so a running tracker has nothing to poll.
+#
+#   bin/demo-load                # load db/fixtures/demo.json into an empty database
+#   bin/demo-load --replace      # empty both tables first
+#   bin/demo-load --file FILE    # load another fixture
+#
+# Exits 1 without changing anything when either table already has rows and
+# --replace was not given.
+
+require 'bundler/setup'
+require 'json'
+require 'optparse'
+
+require_relative '../lib/sla/db'
+require_relative '../lib/sla/demo_fixture'
+
+DEFAULT_PATH = File.expand_path('../db/fixtures/demo.json', __dir__)
+
+path = DEFAULT_PATH
+replace = false
+OptionParser.new do |opts|
+  opts.banner = 'Usage: bin/demo-load [--replace] [--file FILE]'
+  opts.on('--replace', 'Empty the sessions and findings tables before loading') { replace = true }
+  opts.on('--file FILE', "Fixture to load (default #{DEFAULT_PATH})") { |file| path = file }
+end.parse!
+
+unless File.exist?(path)
+  warn "No fixture at #{path}; capture one with bin/demo-export"
+  exit 1
+end
+
+begin
+  summary = SLA::DemoFixture.new(SLA::DB).load(JSON.parse(File.read(path)), replace: replace)
+rescue SLA::DemoFixture::DatabaseNotEmpty => e
+  warn e.message
+  exit 1
+end
+puts summary.map { |key, value| "#{key}=#{value}" }.join(' ')

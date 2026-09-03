@@ -234,7 +234,7 @@ module SLA
       assert_equal [REPO], payload['repos']
       assert_equal %w[sla-remediation issue-4], payload['tags']
       assert_equal 3, payload['max_acu_limit']
-      assert_equal false, payload['resumable']
+      assert_equal true, payload['resumable']
       assert_equal RemediationPrompt.schema, payload['structured_output_schema']
       assert_includes payload['prompt'], 'named `fix/urllib3-sla-4`'
       assert_includes payload['prompt'], 'due by 2026-09-04 08:25 UTC'
