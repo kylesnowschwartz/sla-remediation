@@ -95,14 +95,22 @@ Proof: test/remediation_prompt_test.rb test_schema_is_valid_draft_07_and_accepts
 test_schema_fits_the_session_request_limit
 
 **DISP-23** WHEN the fix version's leading integer differs from the pinned
-version's, THE rendered prompt SHALL instruct Devin to target the lowest
-non-vulnerable release of the new major version, allow minimal source and
-test changes the upgrade needs with each explained in the PR description,
-require running the affected tests with `pytest`, and forbid dependency
-changes beyond the package and any the new major strictly requires;
-otherwise it SHALL keep the same-major-series instructions unchanged.
+version's, THE rendered prompt SHALL instruct Devin to update the pin to the
+lowest release of the new major series that clears the advisories, allow
+minimal source and test changes the upgrade needs with each explained in the
+PR description, require running the affected tests with `pytest` and, if the
+suite cannot run in Devin's environment, saying so in the pull request and
+relying on CI rather than skipping the change, forbid dependency changes
+beyond the package and any the new major strictly requires, and ask the
+structured output to name every changed source or test file with its reason
+and the test commands run; otherwise it SHALL keep the same-major-series
+instructions and structured-output request unchanged, byte-identical to the
+prompt rendered before the major-version path existed.
 Proof: test/remediation_prompt_test.rb test_render_of_a_same_major_finding_has_the_same_major_language,
-test_render_of_a_major_version_finding_has_the_major_path_language
+test_render_of_a_same_major_finding_is_byte_identical_to_the_pre_major_path_prompt,
+test_render_of_a_major_version_finding_has_the_major_path_language,
+test_render_of_a_major_version_finding_asks_for_breaking_changes_and_tests_run_in_the_close,
+test_render_of_a_same_major_finding_does_not_ask_for_breaking_changes_or_tests_run
 
 **DISP-24** THE structured output schema SHALL accept an optional
 `breaking_changes` array of `{file, reason}` objects and an optional
