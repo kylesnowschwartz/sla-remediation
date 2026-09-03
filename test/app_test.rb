@@ -10,6 +10,10 @@ module SLA
       ENV['SLA_REPO'] = 'kylesnowschwartz/superset'
     end
 
+    def test_any_host_header_is_permitted
+      assert_empty App.settings.host_authorization[:permitted_hosts]
+    end
+
     def test_healthz_returns_ok
       get '/healthz'
 
