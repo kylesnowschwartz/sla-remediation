@@ -143,6 +143,38 @@ module SLA
       refute_includes prompt, '%>'
     end
 
+    def test_render_with_a_playbook_id_is_the_short_prompt_of_facts
+      prompt = RemediationPrompt.render(FINDING_ROW, repo: REPO, playbook_id: 'pb_test')
+
+      assert_operator prompt.lines.size, :<, 25
+      assert_equal SAME_MAJOR_FIXTURE.lines.first(8).join, prompt.lines.first(8).join
+      assert_includes prompt, 'Branch: `fix/urllib3-sla-4`, off `master`.'
+      assert_includes prompt, 'The fix stays within the same major version: change nothing but the `urllib3` pin.'
+      assert_includes prompt, 'Follow the attached playbook.'
+      refute_includes prompt, 'uv pip compile'
+      refute_includes prompt, 'apache/superset'
+      refute_includes prompt, 'crosses a major version'
+      refute_includes prompt, '<%'
+      refute_includes prompt, '%>'
+    end
+
+    def test_render_with_a_playbook_id_names_the_major_version_bump
+      row = FINDING_ROW.merge(pinned: '2.3.3', fix_version: '3.1.3')
+      prompt = RemediationPrompt.render(row, repo: REPO, playbook_id: 'pb_test')
+
+      assert_operator prompt.lines.size, :<, 25
+      assert_includes prompt, 'Branch: `fix/urllib3-sla-4`, off `master`.'
+      assert_includes prompt, 'The fix crosses a major version (2.3.3 → 3.1.3)'
+      assert_includes prompt, 'the structured output must include `breaking_changes` and `tests_run`.'
+      refute_includes prompt, 'stays within the same major version'
+    end
+
+    def test_render_without_a_playbook_id_is_the_full_prompt
+      assert_equal RemediationPrompt.render(FINDING_ROW, repo: REPO),
+                   RemediationPrompt.render(FINDING_ROW, repo: REPO, playbook_id: nil)
+      assert_includes RemediationPrompt.render(FINDING_ROW, repo: REPO), 'uv pip compile'
+    end
+
     def test_render_formats_due_at_in_utc
       row = FINDING_ROW.merge(due_at: Time.new(2026, 9, 4, 18, 25, 30, '+10:00'))
 

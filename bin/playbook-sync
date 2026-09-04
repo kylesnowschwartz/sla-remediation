@@ -1,0 +1,58 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Puts the remediation procedure into the organization's Devin Playbook so that
+# each session can be given the short per-finding prompt with the playbook
+# attached. The playbook is found by its macro; it is created when absent and
+# updated when its title, body, or schema differ from the files in this repo.
+#
+#   bin/playbook-sync            # create or update, then print DEVIN_PLAYBOOK_ID=<id>
+#   bin/playbook-sync --help
+#
+# The one stdout line is the DEVIN_PLAYBOOK_ID assignment for .env; what was
+# done goes to stderr. A second run with nothing changed prints the same id and
+# changes nothing. Needs DEVIN_SERVICE_API_KEY_V3 and DEVIN_ORG_ID. Exits 1
+# with the API error body when the Devin API refuses.
+
+require 'bundler/setup'
+require 'json'
+require 'optparse'
+
+require_relative '../lib/sla/devin_client'
+require_relative '../lib/sla/playbook'
+
+REQUIRED_ENV = %w[DEVIN_SERVICE_API_KEY_V3 DEVIN_ORG_ID].freeze
+
+OptionParser.new do |opts|
+  opts.banner = 'Usage: bin/playbook-sync'
+  opts.separator ''
+  opts.separator "Creates or updates the organization's Devin Playbook \"#{SLA::Playbook.title}\""
+  opts.separator "(macro #{SLA::Playbook.macro}) from #{File.basename(SLA::Playbook::PATH)} and"
+  opts.separator "#{File.basename(SLA::RemediationPrompt::SCHEMA_PATH)}, then prints DEVIN_PLAYBOOK_ID=<id> for .env."
+  opts.separator "Needs #{REQUIRED_ENV.join(' and ')}."
+end.parse!
+
+missing = REQUIRED_ENV.select { |name| ENV[name].to_s.empty? }
+unless missing.empty?
+  warn "Missing environment variables: #{missing.join(', ')}"
+  exit 1
+end
+
+client = SLA::DevinClient.new
+begin
+  existing = client.list_playbooks.find { |playbook| playbook.macro == SLA::Playbook.macro }
+  playbook = if existing.nil?
+               warn "created playbook #{SLA::Playbook.title.inspect} (#{SLA::Playbook.macro})"
+               client.create_playbook(**SLA::Playbook.request)
+             elsif SLA::Playbook.current?(existing)
+               warn "playbook #{existing.playbook_id} is up to date"
+               existing
+             else
+               warn "updated playbook #{existing.playbook_id}"
+               client.update_playbook(existing.playbook_id, **SLA::Playbook.request)
+             end
+rescue SLA::DevinAPIError => e
+  warn "Devin API returned #{e.status}: #{e.body.is_a?(String) ? e.body : JSON.generate(e.body)}"
+  exit 1
+end
+puts "DEVIN_PLAYBOOK_ID=#{playbook.playbook_id}"

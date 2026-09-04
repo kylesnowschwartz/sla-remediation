@@ -13,17 +13,22 @@ module SLA
   # The sessions row is inserted as a reservation before the Devin API is called,
   # so the unique index on finding_id decides which of two racing dispatches
   # spends ACUs; the loser never reaches Devin.
+  #
+  # With DEVIN_PLAYBOOK_ID set, the session is attached to that playbook and its
+  # prompt carries only the finding's facts; unset, the prompt is the full procedure.
   class Dispatcher
     TAG = 'sla-remediation'
     RESERVED_STATUS = 'dispatching'
 
-    def initialize(db:, devin:, github:, repo:, max_acu_limit: 3, out: $stdout)
+    def initialize(db:, devin:, github:, repo:, max_acu_limit: 3, out: $stdout,
+                   playbook_id: ENV.fetch('DEVIN_PLAYBOOK_ID', nil))
       @db = db
       @devin = devin
       @github = github
       @repo = repo
       @max_acu_limit = max_acu_limit
       @out = out
+      @playbook_id = playbook_id.to_s.empty? ? nil : playbook_id
     end
 
     # Returns :dispatched, :already_dispatched, :not_fixable, or :not_found.
@@ -56,15 +61,13 @@ module SLA
 
     # The keyword arguments passed to DevinClient#create_session for a findings row.
     def session_request(finding)
-      {
-        prompt: RemediationPrompt.render(finding, repo: @repo),
-        title: finding[:issue_title],
-        repos: [@repo],
-        tags: [TAG, "issue-#{finding[:issue_number]}"],
-        structured_output_schema: RemediationPrompt.schema,
-        max_acu_limit: @max_acu_limit,
-        resumable: true
+      request = {
+        prompt: RemediationPrompt.render(finding, repo: @repo, playbook_id: @playbook_id),
+        title: finding[:issue_title], repos: [@repo], tags: [TAG, "issue-#{finding[:issue_number]}"],
+        structured_output_schema: RemediationPrompt.schema, max_acu_limit: @max_acu_limit, resumable: true
       }
+      request[:playbook_id] = @playbook_id if @playbook_id
+      request
     end
 
     private

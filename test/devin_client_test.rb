@@ -45,6 +45,84 @@ module SLA
       assert_empty session.pull_requests
     end
 
+    def test_create_session_with_a_playbook_id_adds_it_to_the_body
+      stub_fixture(:post, "#{BASE}/sessions", 'create_session_response.json')
+      request = JSON.parse(fixture('create_session_request.json'))
+
+      @client.create_session(
+        prompt: request['prompt'], title: request['title'], repos: request['repos'], tags: request['tags'],
+        structured_output_schema: request['structured_output_schema'], max_acu_limit: request['max_acu_limit'],
+        resumable: request['resumable'], playbook_id: 'pb_test'
+      )
+
+      assert_requested(:post, "#{BASE}/sessions", headers: JSON_HEADERS) do |req|
+        JSON.parse(req.body) == request.merge('playbook_id' => 'pb_test')
+      end
+    end
+
+    # Request-shape only: no recorded response exists for the playbook endpoints.
+    def test_list_playbooks_gets_the_org_playbooks_and_maps_structs
+      body = { items: [playbook_item], end_cursor: nil, has_next_page: false, total: 1 }.to_json
+      stub_request(:get, "#{BASE}/playbooks").to_return(status: 200, body: body, headers: json_header)
+
+      playbooks = @client.list_playbooks
+
+      assert_requested :get, "#{BASE}/playbooks", headers: AUTH_HEADERS
+      assert_equal 1, playbooks.size
+      assert_equal 'pb_test', playbooks.first.playbook_id
+      assert_equal 'SLA dependency remediation (pip-audit)', playbooks.first.title
+      assert_equal '!remediate-pip', playbooks.first.macro
+      assert_equal '# Playbook body', playbooks.first.body
+      assert_equal RemediationPrompt.schema, playbooks.first.structured_output_schema
+    end
+
+    def test_list_playbooks_follows_the_cursor
+      first = { items: [playbook_item], end_cursor: 'c1', has_next_page: true }.to_json
+      second = { items: [playbook_item('playbook_id' => 'pb_2', 'macro' => nil)], end_cursor: nil,
+                 has_next_page: false }.to_json
+      stub_request(:get, "#{BASE}/playbooks").to_return(status: 200, body: first, headers: json_header)
+      stub_request(:get, "#{BASE}/playbooks?after=c1").to_return(status: 200, body: second, headers: json_header)
+
+      playbooks = @client.list_playbooks
+
+      assert_equal %w[pb_test pb_2], playbooks.map(&:playbook_id)
+      assert_nil playbooks.last.macro
+    end
+
+    def test_create_playbook_posts_title_body_macro_and_schema
+      stub_request(:post, "#{BASE}/playbooks").to_return(status: 200, body: playbook_item.to_json, headers: json_header)
+
+      playbook = @client.create_playbook(title: 'SLA dependency remediation (pip-audit)', body: '# Playbook body',
+                                         macro: '!remediate-pip', structured_output_schema: RemediationPrompt.schema)
+
+      assert_requested :post, "#{BASE}/playbooks", headers: JSON_HEADERS, body: playbook_request.to_json
+      assert_equal 'pb_test', playbook.playbook_id
+      assert_equal '!remediate-pip', playbook.macro
+    end
+
+    def test_update_playbook_puts_title_body_macro_and_schema
+      stub_request(:put, "#{BASE}/playbooks/pb_test")
+        .to_return(status: 200, body: playbook_item.to_json, headers: json_header)
+
+      playbook = @client.update_playbook('pb_test', title: 'SLA dependency remediation (pip-audit)',
+                                                    body: '# Playbook body', macro: '!remediate-pip',
+                                                    structured_output_schema: RemediationPrompt.schema)
+
+      assert_requested :put, "#{BASE}/playbooks/pb_test", headers: JSON_HEADERS, body: playbook_request.to_json
+      assert_equal 'pb_test', playbook.playbook_id
+      assert_equal '# Playbook body', playbook.body
+    end
+
+    def test_playbook_errors_raise_devin_api_error_with_the_body
+      stub_request(:post, "#{BASE}/playbooks")
+        .to_return(status: 422, body: '{"detail":"macro must start with !"}', headers: json_header)
+
+      error = assert_raises(DevinAPIError) { @client.create_playbook(**playbook_request, macro: 'bad') }
+
+      assert_equal 422, error.status
+      assert_equal({ 'detail' => 'macro must start with !' }, error.body)
+    end
+
     def test_session_parses_fields_from_waiting_for_user_fixture
       stub_fixture(:get, "#{BASE}/sessions/7cde", 'get_session_waiting_for_user.json')
 
@@ -170,6 +248,21 @@ module SLA
 
     def json_header
       { 'Content-Type' => 'application/json' }
+    end
+
+    def playbook_request
+      { title: 'SLA dependency remediation (pip-audit)', body: '# Playbook body', macro: '!remediate-pip',
+        structured_output_schema: RemediationPrompt.schema }
+    end
+
+    # A PlaybookResponse as the API returns it.
+    def playbook_item(overrides = {})
+      {
+        'playbook_id' => 'pb_test', 'title' => 'SLA dependency remediation (pip-audit)', 'body' => '# Playbook body',
+        'macro' => '!remediate-pip', 'structured_output_schema' => RemediationPrompt.schema,
+        'access_type' => 'org', 'org_id' => ORG_ID, 'created_by' => 'user-test', 'updated_by' => 'user-test',
+        'created_at' => 1_788_336_287, 'updated_at' => 1_788_336_287
+      }.merge(overrides)
     end
 
     def stub_fixture(method, url, name)

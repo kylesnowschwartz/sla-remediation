@@ -225,6 +225,52 @@ module SLA
       assert_empty @out.string
     end
 
+    def test_session_request_without_the_playbook_env_var_has_the_full_prompt_and_no_playbook_id
+      record_finding(4)
+
+      request = with_env('DEVIN_PLAYBOOK_ID', nil) { new_dispatcher.session_request(DB[:findings].first) }
+
+      refute_includes request.keys, :playbook_id
+      assert_includes request[:prompt], 'uv pip compile'
+      assert_equal RemediationPrompt.render(DB[:findings].first, repo: REPO), request[:prompt]
+    end
+
+    def test_session_request_with_the_playbook_env_var_has_the_short_prompt_and_the_playbook_id
+      record_finding(4)
+
+      request = with_env('DEVIN_PLAYBOOK_ID', 'pb_test') { new_dispatcher.session_request(DB[:findings].first) }
+
+      assert_equal 'pb_test', request[:playbook_id]
+      assert_equal RemediationPrompt.schema, request[:structured_output_schema]
+      assert_equal %w[sla-remediation issue-4], request[:tags]
+      assert_equal true, request[:resumable]
+      assert_includes request[:prompt], 'Follow the attached playbook.'
+      assert_includes request[:prompt], 'Branch: `fix/urllib3-sla-4`'
+      refute_includes request[:prompt], 'uv pip compile'
+    end
+
+    def test_an_empty_playbook_env_var_counts_as_unset
+      record_finding(4)
+
+      request = with_env('DEVIN_PLAYBOOK_ID', '') { new_dispatcher.session_request(DB[:findings].first) }
+
+      refute_includes request.keys, :playbook_id
+      assert_includes request[:prompt], 'uv pip compile'
+    end
+
+    def test_dispatch_with_a_playbook_posts_the_playbook_id
+      record_finding(4)
+
+      result = with_env('DEVIN_PLAYBOOK_ID', 'pb_test') { new_dispatcher.dispatch(4) }
+
+      assert_equal :dispatched, result
+      assert_requested(:post, SESSIONS_URL, times: 1) do |req|
+        payload = JSON.parse(req.body)
+        payload['playbook_id'] == 'pb_test' && payload['prompt'].include?('Follow the attached playbook.') &&
+          payload['structured_output_schema'] == RemediationPrompt.schema
+      end
+    end
+
     private
 
     # Asserts every field of a create-session payload; true so it can be a WebMock request matcher.
@@ -243,6 +289,19 @@ module SLA
 
     def issue_fixture
       JSON.parse(fixture('github/github_issues_opened.json')).fetch('issue')
+    end
+
+    # A dispatcher built inside the block, so it reads the environment the block set.
+    def new_dispatcher
+      Dispatcher.new(db: DB, devin: @dispatcher_devin, github: @dispatcher_github, repo: REPO, out: @out)
+    end
+
+    def with_env(name, value)
+      previous = ENV.fetch(name, nil)
+      value.nil? ? ENV.delete(name) : ENV[name] = value
+      yield
+    ensure
+      previous.nil? ? ENV.delete(name) : ENV[name] = previous
     end
 
     def record_finding(issue_number, **overrides)

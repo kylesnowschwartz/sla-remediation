@@ -4,10 +4,13 @@ require 'erb'
 require 'json'
 
 module SLA
-  # The prompt a remediation session is given, rendered from the markdown
+  # The prompt a remediation session is given, rendered from a markdown
   # template for one findings row, and the schema its structured output follows.
+  # With a playbook the prompt carries only the finding's facts and the
+  # procedure comes from the playbook; without one the full procedure is inline.
   class RemediationPrompt
     TEMPLATE_PATH = File.expand_path('../../prompts/remediate_dependency.md.erb', __dir__)
+    FULL_TEMPLATE_PATH = File.expand_path('../../prompts/remediate_dependency.full.md.erb', __dir__)
     SCHEMA_PATH = File.expand_path('../../schemas/remediation_result.json', __dir__)
     DUE_AT_FORMAT = '%Y-%m-%d %H:%M UTC'
 
@@ -20,9 +23,10 @@ module SLA
     end
     Issue = Struct.new(:number, :title, :url, keyword_init: true)
 
-    def self.render(finding_row, repo:)
-      template.result_with_hash(finding: finding(finding_row), issue: issue(finding_row), repo: repo,
-                                due_at: finding_row.fetch(:due_at).getutc.strftime(DUE_AT_FORMAT))
+    def self.render(finding_row, repo:, playbook_id: nil)
+      template(playbook_id ? TEMPLATE_PATH : FULL_TEMPLATE_PATH)
+        .result_with_hash(finding: finding(finding_row), issue: issue(finding_row), repo: repo,
+                          due_at: finding_row.fetch(:due_at).getutc.strftime(DUE_AT_FORMAT))
     end
 
     # The parsed structured output schema, read once per process.
@@ -30,8 +34,10 @@ module SLA
       @schema ||= JSON.parse(File.read(SCHEMA_PATH))
     end
 
-    def self.template
-      @template ||= ERB.new(File.read(TEMPLATE_PATH), trim_mode: '-')
+    # Each template is parsed once per process.
+    def self.template(path)
+      @templates ||= {}
+      @templates[path] ||= ERB.new(File.read(path), trim_mode: '-')
     end
 
     def self.finding(row)

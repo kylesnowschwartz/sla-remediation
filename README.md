@@ -13,6 +13,8 @@ this service makes that deadline visible and hands routine fixes to Devin ([deci
 - The GitHub webhook verifies its signature, reads `SECURITY-SLA.md`, and records the finding and due date in SQLite.
 - The dispatcher starts one Devin session; the tracker follows its result, pull request, checks, and SLA outcome, and sends CI failures back to the session.
 
+The remediation procedure lives in a Devin Playbook that `bin/playbook-sync` creates from `prompts/remediate_dependency.playbook.md` and keeps up to date; it prints the `DEVIN_PLAYBOOK_ID` for `.env`. With that id set, the session prompt carries only the finding's facts (`prompts/remediate_dependency.md.erb`) and the session is attached to the playbook, so the security team edits the procedure in Devin. Without `DEVIN_PLAYBOOK_ID` the service sends the full procedure inline from `prompts/remediate_dependency.full.md.erb`.
+
 [Behavioural specifications](docs/spec/README.md) state exactly what each slice promises. [Architecture](docs/architecture.md) shows the actors and data flow.
 
 ## Try it without credentials
@@ -87,6 +89,7 @@ The shell or `.env` supplies these variables.
 
 - `DEVIN_SERVICE_API_KEY_V3`: Devin v3 service-user key for creating and polling sessions.
 - `DEVIN_ORG_ID`: organization in which sessions are created.
+- `DEVIN_PLAYBOOK_ID`: optional id printed by `bin/playbook-sync`; set, sessions get the playbook and the short prompt.
 - `SLA_GITHUB_TOKEN`: token for repository reads, issue comments, and demo reset.
 - `SLA_WEBHOOK_SECRET`: secret used to verify `X-Hub-Signature-256`.
 - `SLA_REPO`: target repository as `owner/name`.
