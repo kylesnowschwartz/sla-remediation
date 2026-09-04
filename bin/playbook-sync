@@ -1,10 +1,10 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Puts the remediation procedure into the organization's Devin Playbook so that
-# each session can be given the short per-finding prompt with the playbook
-# attached. The playbook is found by its macro; it is created when absent and
-# updated when its title, body, or schema differ from the files in this repo.
+# Puts the remediation procedure into the organization's Devin Playbook that
+# every remediation session is attached to. The playbook is found by its macro;
+# it is created when absent and updated when its title, body, or schema differ
+# from the files in this repo.
 #
 #   bin/playbook-sync            # create or update, then print DEVIN_PLAYBOOK_ID=<id>
 #   bin/playbook-sync --help

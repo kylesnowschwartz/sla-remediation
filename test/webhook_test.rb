@@ -19,6 +19,7 @@ module SLA
     def setup
       ENV['SLA_WEBHOOK_SECRET'] = SECRET
       ENV['SLA_REPO'] = REPO
+      ENV['DEVIN_PLAYBOOK_ID'] = 'pb_test'
       ENV.delete('SLA_AUTO_DISPATCH')
       DB[:sessions].delete
       DB[:findings].delete

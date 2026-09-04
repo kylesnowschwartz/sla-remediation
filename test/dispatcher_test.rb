@@ -16,6 +16,7 @@ module SLA
     GITHUB_API = /api\.github\.com/
     FIXTURES = File.expand_path('fixtures', __dir__)
     JSON_HEADER = { 'Content-Type' => 'application/json' }.freeze
+    PLAYBOOK_ID = 'pb_test'
 
     def setup
       DB[:sessions].delete
@@ -23,7 +24,8 @@ module SLA
       @out = StringIO.new
       @dispatcher_devin = DevinClient.new(api_key: 'test-key', org_id: ORG_ID)
       @dispatcher_github = GitHubClient.new(token: 'test-token')
-      @dispatcher = Dispatcher.new(db: DB, devin: @dispatcher_devin, github: @dispatcher_github, repo: REPO, out: @out)
+      @dispatcher = Dispatcher.new(db: DB, devin: @dispatcher_devin, github: @dispatcher_github, repo: REPO,
+                                   playbook_id: PLAYBOOK_ID, out: @out)
       stub_request(:post, SESSIONS_URL).to_return(status: 200, body: fixture('devin/create_session_response.json'),
                                                   headers: JSON_HEADER)
       stub_request(:get, PULLS_URL).with(query: PULLS_QUERY).to_return(status: 200, body: '[]', headers: JSON_HEADER)
@@ -72,7 +74,8 @@ module SLA
         DevinClient::Session.new(response)
       end
 
-      result = Dispatcher.new(db: DB, devin: devin, github: @dispatcher_github, repo: REPO, out: @out).dispatch(4)
+      result = Dispatcher.new(db: DB, devin: devin, github: @dispatcher_github, repo: REPO, playbook_id: PLAYBOOK_ID,
+                              out: @out).dispatch(4)
 
       assert_equal :dispatched, result
       assert_equal ['dispatching'], reserved
@@ -89,7 +92,8 @@ module SLA
       end
       racer.define_singleton_method(:branch_exists?) { |*| false }
 
-      result = Dispatcher.new(db: DB, devin: @dispatcher_devin, github: racer, repo: REPO, out: @out).dispatch(4)
+      result = Dispatcher.new(db: DB, devin: @dispatcher_devin, github: racer, repo: REPO, playbook_id: PLAYBOOK_ID,
+                              out: @out).dispatch(4)
 
       assert_equal :already_dispatched, result
       assert_not_requested :post, SESSIONS_URL
@@ -211,7 +215,7 @@ module SLA
       assert_not_requested :post, SESSIONS_URL
       assert_not_requested :get, GITHUB_API
       assert_equal 0, DB[:sessions].count
-      assert_includes @out.string, 'named `fix/urllib3-sla-4`'
+      assert_includes @out.string, 'Branch: `fix/urllib3-sla-4`, off `master`.'
       payload = JSON.parse(@out.string[@out.string.index('{')..])
 
       assert session_request?(payload)
@@ -225,49 +229,22 @@ module SLA
       assert_empty @out.string
     end
 
-    def test_session_request_without_the_playbook_env_var_has_the_full_prompt_and_no_playbook_id
+    def test_the_playbook_id_comes_from_the_environment
       record_finding(4)
 
-      request = with_env('DEVIN_PLAYBOOK_ID', nil) { new_dispatcher.session_request(DB[:findings].first) }
+      request = with_env('DEVIN_PLAYBOOK_ID', 'playbook-from-env') do
+        dispatcher = Dispatcher.new(db: DB, devin: @dispatcher_devin, github: @dispatcher_github, repo: REPO, out: @out)
+        dispatcher.session_request(DB[:findings].first)
+      end
 
-      refute_includes request.keys, :playbook_id
-      assert_includes request[:prompt], 'uv pip compile'
-      assert_equal RemediationPrompt.render(DB[:findings].first, repo: REPO), request[:prompt]
+      assert_equal 'playbook-from-env', request[:playbook_id]
     end
 
-    def test_session_request_with_the_playbook_env_var_has_the_short_prompt_and_the_playbook_id
-      record_finding(4)
-
-      request = with_env('DEVIN_PLAYBOOK_ID', 'pb_test') { new_dispatcher.session_request(DB[:findings].first) }
-
-      assert_equal 'pb_test', request[:playbook_id]
-      assert_equal RemediationPrompt.schema, request[:structured_output_schema]
-      assert_equal %w[sla-remediation issue-4], request[:tags]
-      assert_equal true, request[:resumable]
-      assert_includes request[:prompt], 'Follow the attached playbook.'
-      assert_includes request[:prompt], 'Branch: `fix/urllib3-sla-4`'
-      refute_includes request[:prompt], 'uv pip compile'
-    end
-
-    def test_an_empty_playbook_env_var_counts_as_unset
-      record_finding(4)
-
-      request = with_env('DEVIN_PLAYBOOK_ID', '') { new_dispatcher.session_request(DB[:findings].first) }
-
-      refute_includes request.keys, :playbook_id
-      assert_includes request[:prompt], 'uv pip compile'
-    end
-
-    def test_dispatch_with_a_playbook_posts_the_playbook_id
-      record_finding(4)
-
-      result = with_env('DEVIN_PLAYBOOK_ID', 'pb_test') { new_dispatcher.dispatch(4) }
-
-      assert_equal :dispatched, result
-      assert_requested(:post, SESSIONS_URL, times: 1) do |req|
-        payload = JSON.parse(req.body)
-        payload['playbook_id'] == 'pb_test' && payload['prompt'].include?('Follow the attached playbook.') &&
-          payload['structured_output_schema'] == RemediationPrompt.schema
+    def test_a_dispatcher_without_a_playbook_id_cannot_be_built
+      with_env('DEVIN_PLAYBOOK_ID', nil) do
+        assert_raises(KeyError) do
+          Dispatcher.new(db: DB, devin: @dispatcher_devin, github: @dispatcher_github, repo: REPO, out: @out)
+        end
       end
     end
 
@@ -275,25 +252,23 @@ module SLA
 
     # Asserts every field of a create-session payload; true so it can be a WebMock request matcher.
     def session_request?(payload)
-      assert_equal %w[prompt title repos tags resumable max_acu_limit structured_output_schema].sort, payload.keys.sort
+      assert_equal %w[prompt title repos tags playbook_id resumable max_acu_limit structured_output_schema].sort,
+                   payload.keys.sort
       assert_equal 'test: webhook path (throwaway)', payload['title']
       assert_equal [REPO], payload['repos']
       assert_equal %w[sla-remediation issue-4], payload['tags']
+      assert_equal PLAYBOOK_ID, payload['playbook_id']
       assert_equal 3, payload['max_acu_limit']
       assert_equal true, payload['resumable']
       assert_equal RemediationPrompt.schema, payload['structured_output_schema']
-      assert_includes payload['prompt'], 'named `fix/urllib3-sla-4`'
+      assert_includes payload['prompt'], 'Branch: `fix/urllib3-sla-4`, off `master`.'
       assert_includes payload['prompt'], 'due by 2026-09-04 08:25 UTC'
+      assert_includes payload['prompt'], 'Follow the attached playbook.'
       true
     end
 
     def issue_fixture
       JSON.parse(fixture('github/github_issues_opened.json')).fetch('issue')
-    end
-
-    # A dispatcher built inside the block, so it reads the environment the block set.
-    def new_dispatcher
-      Dispatcher.new(db: DB, devin: @dispatcher_devin, github: @dispatcher_github, repo: REPO, out: @out)
     end
 
     def with_env(name, value)

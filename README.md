@@ -13,7 +13,7 @@ this service makes that deadline visible and hands routine fixes to Devin ([deci
 - The GitHub webhook verifies its signature, reads `SECURITY-SLA.md`, and records the finding and due date in SQLite.
 - The dispatcher starts one Devin session; the tracker follows its result, pull request, checks, and SLA outcome, and sends CI failures back to the session.
 
-The remediation procedure lives in a Devin Playbook that `bin/playbook-sync` creates from `prompts/remediate_dependency.playbook.md` and keeps up to date; it prints the `DEVIN_PLAYBOOK_ID` for `.env`. With that id set, the session prompt carries only the finding's facts (`prompts/remediate_dependency.md.erb`) and the session is attached to the playbook, so the security team edits the procedure in Devin. Without `DEVIN_PLAYBOOK_ID` the service sends the full procedure inline from `prompts/remediate_dependency.full.md.erb`.
+The remediation procedure lives in a Devin Playbook that `bin/playbook-sync` creates from `prompts/remediate_dependency.playbook.md` and keeps up to date; it prints the `DEVIN_PLAYBOOK_ID` for `.env`. Each session is attached to that playbook and its prompt carries only the finding's facts (`prompts/remediate_dependency.md.erb`), so the security team edits the procedure in Devin without touching this service.
 
 [Behavioural specifications](docs/spec/README.md) state exactly what each slice promises. [Architecture](docs/architecture.md) shows the actors and data flow.
 
@@ -53,7 +53,7 @@ The web server and tracker share SQLite on the `sla-db` volume. `docker compose 
 
 1. Fork `kylesnowschwartz/superset`, not `apache/superset`, so that `SECURITY-SLA.md`, the `sla-remediation` and `policy` labels, and the seeded pins in `requirements/base.txt` come along. Nothing is ever opened against `apache/superset`.
 2. Create a fine-grained GitHub personal access token scoped to the fork with read and write access to contents, issues, and pull requests. This is `SLA_GITHUB_TOKEN`. Without it the first `SECURITY-SLA.md` read counts against GitHub's anonymous rate limit and can fail on a shared network.
-3. Get a Devin API v3 *service* key and the `org-...` organization ID: in Devin's organization settings, create a service user and an API key for it. Personal keys do not work with v3. These are `DEVIN_SERVICE_API_KEY_V3` and `DEVIN_ORG_ID`.
+3. Get a Devin API v3 *service* key and the `org-...` organization ID: in Devin's organization settings, create a service user and an API key for it. Personal keys do not work with v3. These are `DEVIN_SERVICE_API_KEY_V3` and `DEVIN_ORG_ID`. With both in the environment, `bin/playbook-sync` creates the remediation playbook in the organization and prints `DEVIN_PLAYBOOK_ID`.
 4. Create a smee channel with `curl -sI https://smee.io/new | grep -i location`; the `Location` URL is `SMEE_URL`. On the fork, open Settings → Webhooks → Add webhook. Set the payload URL to that URL, content type to `application/json`, secret to a random string you keep as `SLA_WEBHOOK_SECRET`, and events to "Issues" only.
 5. Set `SLA_REPO` to the fork's `owner/name` in `.env`, along with the values above, and `SLA_AUTO_DISPATCH=true` if a labelled issue should start a Devin session on its own.
 6. Start the services, put the fork in its starting state, and scan it:
@@ -89,7 +89,7 @@ The shell or `.env` supplies these variables.
 
 - `DEVIN_SERVICE_API_KEY_V3`: Devin v3 service-user key for creating and polling sessions.
 - `DEVIN_ORG_ID`: organization in which sessions are created.
-- `DEVIN_PLAYBOOK_ID`: optional id printed by `bin/playbook-sync`; set, sessions get the playbook and the short prompt.
+- `DEVIN_PLAYBOOK_ID`: id of the remediation playbook, printed by `bin/playbook-sync`.
 - `SLA_GITHUB_TOKEN`: token for repository reads, issue comments, and demo reset.
 - `SLA_WEBHOOK_SECRET`: secret used to verify `X-Hub-Signature-256`.
 - `SLA_REPO`: target repository as `owner/name`.
