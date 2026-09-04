@@ -47,7 +47,7 @@ A finding becomes work for Devin exactly once: never a second session when a ses
   - in the same delivery, with the result logged on the delivery line
   - a duplicate delivery does not call Devin again
 - **DISP-16** While `SLA_AUTO_DISPATCH` is not `true`, findings are recorded only, logged `dispatch=off`.
-- **DISP-17** Failed automatic dispatch: findings row kept, no session, error logged, no retry.
+- **DISP-17** Failed automatic dispatch, including an unset `DEVIN_PLAYBOOK_ID`: findings row kept, no session, error logged, no retry.
 - **DISP-18** DISP-01 and DISP-03 apply to automatic dispatch, logged `not_fixable` or `already_dispatched`.
 
 ## Devin client and command
@@ -88,7 +88,7 @@ A finding becomes work for Devin exactly once: never a second session when a ses
 - DISP-25: `test/playbook_test.rb` test_body_keeps_every_rule_of_the_full_prompt, test_body_handles_both_major_version_cases, test_body_has_the_recommended_sections
 - DISP-15: `test/webhook_test.rb` test_opened_with_auto_dispatch_starts_one_session
 - DISP-16: `test/webhook_test.rb` test_opened_without_auto_dispatch_records_only_the_finding
-- DISP-17: `test/webhook_test.rb` test_auto_dispatch_failure_keeps_the_finding_and_logs_the_error
+- DISP-17: `test/webhook_test.rb` test_auto_dispatch_failure_keeps_the_finding_and_logs_the_error, test_auto_dispatch_without_a_playbook_id_keeps_the_finding_and_logs_the_error
 - DISP-18: `test/webhook_test.rb` test_auto_dispatch_of_an_unfixable_finding_creates_nothing, test_auto_dispatch_skips_a_finding_whose_fix_branch_exists
 - DISP-19: `test/devin_client_test.rb` test_not_found_raises_devin_api_error
 - DISP-20: `test/devin_client_test.rb` test_list_repositories_uses_v3beta1_and_maps_structs

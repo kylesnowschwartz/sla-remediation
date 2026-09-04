@@ -83,6 +83,7 @@ module SLA
 
     def auto_dispatch(issue_number)
       return :off unless ENV['SLA_AUTO_DISPATCH'] == 'true'
+      return 'error (DEVIN_PLAYBOOK_ID unset; run bin/playbook-sync)' if ENV['DEVIN_PLAYBOOK_ID'].to_s.empty?
 
       Dispatcher.new(db: DB, devin: settings.devin, github: settings.github, repo: ENV.fetch('SLA_REPO'),
                      out: settings.dispatch_out).dispatch(issue_number)
