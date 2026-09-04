@@ -13,7 +13,7 @@ this service makes that deadline visible and hands routine fixes to Devin ([deci
 - The GitHub webhook verifies its signature, reads `SECURITY-SLA.md`, and records the finding and due date in SQLite.
 - The dispatcher starts one Devin session; the tracker follows its result, pull request, checks, and SLA outcome, and sends CI failures back to the session.
 
-The remediation procedure lives in a Devin Playbook that `bin/playbook-sync` creates from `prompts/remediate_dependency.playbook.md` and keeps up to date; it prints the `DEVIN_PLAYBOOK_ID` for `.env`. Each session is attached to that playbook and its prompt carries only the finding's facts (`prompts/remediate_dependency.md.erb`), so the security team edits the procedure in Devin without touching this service.
+The remediation procedure lives in a Devin Playbook that `bin/playbook-sync` creates from `prompts/remediate_dependency.playbook.md` and keeps up to date; it prints the `DEVIN_PLAYBOOK_ID` for `.env`. Each session is attached to that playbook and its prompt carries only the finding's facts (`prompts/remediate_dependency.md.erb`), so the security team edits the procedure in Devin without touching this service ([decision 9](docs/decisions/0009-procedure-lives-in-a-devin-playbook.md)).
 
 [Behavioural specifications](docs/spec/README.md) state exactly what each slice promises. [Architecture](docs/architecture.md) shows the actors and data flow.
 
@@ -138,6 +138,7 @@ After a good run, before the reset, `bin/demo-export` writes the findings and se
 - [6. We call the sessions API instead of configuring a Devin Automation](docs/decisions/0006-why-not-a-devin-automation.md)
 - [7. A smee.io channel relays GitHub webhooks to the developer's machine](docs/decisions/0007-smee-relays-webhooks-in-development.md)
 - [8. CI failures go back to the session that opened the pull request](docs/decisions/0008-ci-failures-go-back-to-the-session.md)
+- [9. The remediation procedure lives in a Devin Playbook, not in the prompt](docs/decisions/0009-procedure-lives-in-a-devin-playbook.md)
 
 ## Development
 

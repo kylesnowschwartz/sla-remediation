@@ -44,7 +44,7 @@ flowchart LR
 1. `bin/scan` or an engineer files a labelled issue with a finding block.
 2. smee forwards the signed GitHub webhook to `POST /webhooks/github`.
 3. Triage parses the finding, calculates its due date, and stores it once.
-4. The dispatcher renders `prompts/` and creates a resumable Devin session with `schemas/`.
+4. The dispatcher renders the finding's facts from `prompts/` and creates a resumable Devin session attached to the remediation playbook, with `schemas/` ([decision 9](decisions/0009-procedure-lives-in-a-devin-playbook.md)).
 5. Devin upgrades the pin, checks it, opens a pull request, and reports its result.
 6. The tracker polls Devin, validates the result, and records session and pull-request state.
 7. The tracker comments on the issue when it first sees the pull request.
@@ -55,6 +55,6 @@ flowchart LR
 
 - Only `DevinClient` and `GitHubClient` know HTTP; both are tested against recorded fixtures.
 - `Policy` owns SLA date math; `FindingBlock` owns finding-block parsing, and nothing else parses issue bodies.
-- The prompt templates and structured-output schema are files under `prompts/` and `schemas/`, reviewable instead of string literals. `RemediationPrompt` renders the dispatch prompt and `RepairPrompt` the CI-repair message; the tracker composes no message text.
+- The prompt templates, the playbook body, and the structured-output schema are files under `prompts/` and `schemas/`, reviewable instead of string literals. `RemediationPrompt` renders the dispatch prompt and `RepairPrompt` the CI-repair message; `Playbook` owns the procedure's title, macro, body, and schema; the tracker composes no message text.
 
 [Behavioural specifications](spec/README.md) define each slice's promises.
