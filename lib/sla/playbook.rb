@@ -32,9 +32,10 @@ module SLA
       { title: title, body: body, macro: macro, structured_output_schema: schema }
     end
 
-    # Whether an organization playbook already carries this title, body, and schema.
+    # Whether an organization playbook already carries this title, macro, body, and schema.
     def self.current?(playbook)
-      playbook.title == title && playbook.body == body && playbook.structured_output_schema == schema
+      playbook.title == title && playbook.macro == macro && playbook.body == body &&
+        playbook.structured_output_schema == schema
     end
   end
 end

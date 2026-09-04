@@ -38,9 +38,8 @@ module SLA
       loop do
         body = request(:get, after ? "#{playbooks_path}?#{URI.encode_www_form(after: after)}" : playbooks_path)
         items.concat(body.fetch('items').map { |item| playbook_struct(item) })
-        break unless body['has_next_page']
-
-        after = body.fetch('end_cursor')
+        after = body['end_cursor']
+        break unless body['has_next_page'] && after
       end
       items
     end
@@ -50,7 +49,7 @@ module SLA
       playbook_struct(request(:post, playbooks_path, payload))
     end
 
-    # Replaces every field of the playbook; the API updates with PUT.
+    # Sends every field the create call sends; the API updates with PUT.
     def update_playbook(playbook_id, title:, body:, macro:, structured_output_schema:)
       payload = { title: title, body: body, macro: macro, structured_output_schema: structured_output_schema }
       playbook_struct(request(:put, playbooks_path(playbook_id), payload))

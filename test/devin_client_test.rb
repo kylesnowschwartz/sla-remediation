@@ -89,6 +89,14 @@ module SLA
       assert_nil playbooks.last.macro
     end
 
+    def test_list_playbooks_stops_when_has_next_page_comes_without_a_cursor
+      body = { items: [playbook_item], end_cursor: nil, has_next_page: true }.to_json
+      stub_request(:get, "#{BASE}/playbooks").to_return(status: 200, body: body, headers: json_header)
+
+      assert_equal %w[pb_test], @client.list_playbooks.map(&:playbook_id)
+      assert_requested :get, "#{BASE}/playbooks", times: 1
+    end
+
     def test_create_playbook_posts_title_body_macro_and_schema
       stub_request(:post, "#{BASE}/playbooks").to_return(status: 200, body: playbook_item.to_json, headers: json_header)
 

@@ -12,7 +12,8 @@
 # The one stdout line is the DEVIN_PLAYBOOK_ID assignment for .env; what was
 # done goes to stderr. A second run with nothing changed prints the same id and
 # changes nothing. Needs DEVIN_SERVICE_API_KEY_V3 and DEVIN_ORG_ID. Exits 1
-# with the API error body when the Devin API refuses.
+# with the API error body when the Devin API refuses, or the error message
+# when it cannot be reached.
 
 require 'bundler/setup'
 require 'json'
@@ -42,17 +43,20 @@ client = SLA::DevinClient.new
 begin
   existing = client.list_playbooks.find { |playbook| playbook.macro == SLA::Playbook.macro }
   playbook = if existing.nil?
-               warn "created playbook #{SLA::Playbook.title.inspect} (#{SLA::Playbook.macro})"
                client.create_playbook(**SLA::Playbook.request)
+                     .tap { |created| warn "created playbook #{created.playbook_id} (#{SLA::Playbook.macro})" }
              elsif SLA::Playbook.current?(existing)
                warn "playbook #{existing.playbook_id} is up to date"
                existing
              else
-               warn "updated playbook #{existing.playbook_id}"
                client.update_playbook(existing.playbook_id, **SLA::Playbook.request)
+                     .tap { |updated| warn "updated playbook #{updated.playbook_id}" }
              end
 rescue SLA::DevinAPIError => e
   warn "Devin API returned #{e.status}: #{e.body.is_a?(String) ? e.body : JSON.generate(e.body)}"
+  exit 1
+rescue SLA::Error => e
+  warn e.message
   exit 1
 end
 puts "DEVIN_PLAYBOOK_ID=#{playbook.playbook_id}"

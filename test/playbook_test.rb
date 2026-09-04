@@ -64,13 +64,14 @@ module SLA
                      structured_output_schema: Playbook.schema }, Playbook.request)
     end
 
-    def test_current_compares_title_body_and_schema
+    def test_current_compares_title_macro_body_and_schema
       synced = DevinClient::Playbook.new(playbook_id: 'pb_1', title: Playbook.title, body: Playbook.body,
                                          macro: Playbook.macro, structured_output_schema: Playbook.schema)
 
       assert Playbook.current?(synced)
       refute Playbook.current?(synced.dup.tap { |p| p.body = "#{Playbook.body}\n- one more rule" })
       refute Playbook.current?(synced.dup.tap { |p| p.title = 'Something else' })
+      refute Playbook.current?(synced.dup.tap { |p| p.macro = '!other' })
       refute Playbook.current?(synced.dup.tap { |p| p.structured_output_schema = nil })
     end
   end
