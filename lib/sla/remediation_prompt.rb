@@ -6,6 +6,7 @@ require 'json'
 module SLA
   # The prompt a remediation session is given, rendered from the markdown
   # template for one findings row, and the schema its structured output follows.
+  # The prompt carries the finding's facts; the procedure is the attached playbook.
   class RemediationPrompt
     TEMPLATE_PATH = File.expand_path('../../prompts/remediate_dependency.md.erb', __dir__)
     SCHEMA_PATH = File.expand_path('../../schemas/remediation_result.json', __dir__)

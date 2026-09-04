@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'faraday'
+require 'uri'
 
 require_relative 'errors'
 require_relative 'devin_client/session'
@@ -14,6 +15,7 @@ module SLA
 
     Repository = Struct.new(:repo_path, :repo_name, :git_connection_host, keyword_init: true)
     Message = Struct.new(:source, :origin, :message, :created_at, keyword_init: true)
+    Playbook = Struct.new(:playbook_id, :title, :body, :macro, :structured_output_schema, keyword_init: true)
 
     def initialize(api_key: ENV.fetch('DEVIN_SERVICE_API_KEY_V3'), org_id: ENV.fetch('DEVIN_ORG_ID'), connection: nil)
       @org_id = org_id
@@ -29,11 +31,38 @@ module SLA
       end
     end
 
-    def create_session(prompt:, title:, repos:, tags:, structured_output_schema:, max_acu_limit:, resumable: false)
+    # Every organization playbook, following the cursor across pages.
+    def list_playbooks
+      items = []
+      after = nil
+      loop do
+        body = request(:get, after ? "#{playbooks_path}?#{URI.encode_www_form(after: after)}" : playbooks_path)
+        items.concat(body.fetch('items').map { |item| playbook_struct(item) })
+        after = body['end_cursor']
+        break unless body['has_next_page'] && after
+      end
+      items
+    end
+
+    def create_playbook(title:, body:, macro:, structured_output_schema:)
+      payload = { title: title, body: body, macro: macro, structured_output_schema: structured_output_schema }
+      playbook_struct(request(:post, playbooks_path, payload))
+    end
+
+    # Sends every field the create call sends; the API updates with PUT.
+    def update_playbook(playbook_id, title:, body:, macro:, structured_output_schema:)
+      payload = { title: title, body: body, macro: macro, structured_output_schema: structured_output_schema }
+      playbook_struct(request(:put, playbooks_path(playbook_id), payload))
+    end
+
+    # A nil playbook_id is left out of the payload, so the session gets no playbook.
+    def create_session(prompt:, title:, repos:, tags:, structured_output_schema:, max_acu_limit:, resumable: false,
+                       playbook_id: nil)
       payload = {
         prompt: prompt, title: title, repos: repos, tags: tags, resumable: resumable,
         max_acu_limit: max_acu_limit, structured_output_schema: structured_output_schema
       }
+      payload[:playbook_id] = playbook_id unless playbook_id.nil?
       Session.new(request(:post, sessions_path, payload))
     end
 
@@ -68,9 +97,19 @@ module SLA
       Time.at(seconds).utc unless seconds.nil?
     end
 
+    def playbook_struct(item)
+      Playbook.new(playbook_id: item['playbook_id'], title: item['title'], body: item['body'], macro: item['macro'],
+                   structured_output_schema: item['structured_output_schema'])
+    end
+
     def sessions_path(session_id = nil)
       path = "/v3/organizations/#{@org_id}/sessions"
       session_id ? "#{path}/#{session_id}" : path
+    end
+
+    def playbooks_path(playbook_id = nil)
+      path = "/v3/organizations/#{@org_id}/playbooks"
+      playbook_id ? "#{path}/#{playbook_id}" : path
     end
 
     def request(method, path, payload = nil)

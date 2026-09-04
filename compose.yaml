@@ -17,6 +17,7 @@ services:
       - SLA_WEBHOOK_SECRET
       - DEVIN_SERVICE_API_KEY_V3
       - DEVIN_ORG_ID
+      - DEVIN_PLAYBOOK_ID
       - SLA_AUTO_DISPATCH
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:4567/healthz"]
@@ -39,6 +40,7 @@ services:
       - SLA_GITHUB_TOKEN
       - DEVIN_SERVICE_API_KEY_V3
       - DEVIN_ORG_ID
+      - DEVIN_PLAYBOOK_ID
     depends_on:
       app:
         condition: service_healthy

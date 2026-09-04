@@ -14,6 +14,7 @@ A finding becomes work for Devin exactly once: never a second session when a ses
 
 - **DISP-06** Dispatch creates exactly one Devin session:
   - rendered prompt, issue title as session title, target repository as its only repository
+  - the playbook `DEVIN_PLAYBOOK_ID` names, which holds the remediation procedure
   - tags `sla-remediation` and `issue-<issue_number>`
   - remediation result schema as structured output, ACU limit 3, `resumable` true (so the tracker can message it later, TRACK-28)
 - **DISP-07** Writes a sessions row (id, status, detail, start, last poll), prints URL, returns `dispatched`.
@@ -25,22 +26,20 @@ A finding becomes work for Devin exactly once: never a second session when a ses
 
 ## The prompt and the schema
 
-- **DISP-13** The rendered prompt names the whole finding and leaves no unrendered template tags:
+- **DISP-13** The rendered prompt names the whole finding, tells the session to follow the attached playbook, and leaves no unrendered template tags:
   - target repository, issue number, title, URL
   - package, pinned version, advisories, fix version, severity
   - due date in UTC as `YYYY-MM-DD HH:MM UTC`, branch `fix/<package>-sla-<issue_number>`
-  - the instruction that the pull request say `Fixes #<issue_number>`
+  - none of the procedure: the lockfile route, the pip-audit check, and the PR rules are in the playbook
 - **DISP-14** The structured output schema is valid JSON Schema draft-07 and smaller than 64 KB:
   - accepts a complete remediation result
   - rejects an unknown `lockfile_route`, a missing `pr_url`, or an incomplete `verification`
-- **DISP-23** A fix version in a new major series switches the prompt to major-upgrade wording:
-  - pin the lowest release of the new major series that clears the advisories
-  - allow the minimal source and test changes the upgrade needs, each explained in the PR description
-  - run the affected tests with `pytest`; if the suite cannot run in Devin, say so in the pull request and rely on CI rather than skip the change
-  - no dependency changes beyond the package and what the new major strictly requires
-  - structured output names every changed source or test file with its reason, plus the test commands run
-  - a same-major fix version keeps the same-major instructions and output request, byte-identical to the baseline prompt
+- **DISP-23** A fix version in a new major series switches the prompt's one-line verdict to the major-version case:
+  - the prompt says the fix crosses a major version, that the minimal source and test changes the upgrade breaks are permitted, and that the structured output must include `breaking_changes` and `tests_run`
+  - a same-major fix version says to change nothing but the pin, byte-identical to the baseline prompt
+  - the playbook carries both procedures: the lowest release of the new major series, the affected tests run with `pytest` (or CI relied on, never the change skipped), no dependency changes beyond what the new major strictly requires
 - **DISP-24** The schema accepts optional `breaking_changes` (`{file, reason}`) and `tests_run` (strings).
+- **DISP-25** The playbook body keeps every rule of the procedure: never a PR against `apache/superset`, the `uv pip compile` recompile with the direct-edit fall-back, `pip-audit --disable-pip --no-deps` on the file without `-e ./superset-core`, `Fixes #<issue number>`, no unrelated changes, no full test suite.
 
 ## Automatic dispatch from the webhook
 
@@ -48,7 +47,7 @@ A finding becomes work for Devin exactly once: never a second session when a ses
   - in the same delivery, with the result logged on the delivery line
   - a duplicate delivery does not call Devin again
 - **DISP-16** While `SLA_AUTO_DISPATCH` is not `true`, findings are recorded only, logged `dispatch=off`.
-- **DISP-17** Failed automatic dispatch: findings row kept, no session, error logged, no retry.
+- **DISP-17** Failed automatic dispatch, including an unset `DEVIN_PLAYBOOK_ID`: findings row kept, no session, error logged, no retry.
 - **DISP-18** DISP-01 and DISP-03 apply to automatic dispatch, logged `not_fixable` or `already_dispatched`.
 
 ## Devin client and command
@@ -58,7 +57,8 @@ A finding becomes work for Devin exactly once: never a second session when a ses
 - **DISP-21** `bin/dispatch <issue_number>` dispatches one finding:
   - exit 0 for `dispatched` or `already_dispatched`, 1 otherwise
   - `--dry-run` previews instead and exits 0
-- **DISP-22** `DEVIN_SERVICE_API_KEY_V3`, `DEVIN_ORG_ID`, or `SLA_REPO` unset → named, exit 1, no dispatch.
+- **DISP-22** `DEVIN_SERVICE_API_KEY_V3`, `DEVIN_ORG_ID`, `DEVIN_PLAYBOOK_ID`, or `SLA_REPO` unset → named, exit 1, no dispatch.
+- **DISP-26** `bin/playbook-sync` creates the organization playbook (title, `!remediate-pip` macro, body, schema) when absent, updates it when they differ, and prints `DEVIN_PLAYBOOK_ID=<id>`; a second run changes nothing.
 
 ## Not specified
 
@@ -81,17 +81,19 @@ A finding becomes work for Devin exactly once: never a second session when a ses
 - DISP-10: `test/dispatcher_test.rb` test_a_failed_devin_call_releases_the_reservation_and_raises
 - DISP-11: `test/dispatcher_test.rb` test_preview_prints_the_prompt_and_payload_without_posting, test_preview_fetches_missing_issue_details_and_stores_them
 - DISP-12: `test/dispatcher_test.rb` test_preview_of_an_unfixable_or_unknown_issue
-- DISP-13: `test/remediation_prompt_test.rb` test_render_names_the_finding_and_the_rules, test_render_formats_due_at_in_utc, test_render_leaves_no_erb_tags
+- DISP-13: `test/remediation_prompt_test.rb` test_render_names_the_finding_and_the_rules, test_render_is_short_and_leaves_the_procedure_to_the_playbook, test_render_formats_due_at_in_utc, test_render_leaves_no_erb_tags
 - DISP-14: `test/remediation_prompt_test.rb` test_schema_is_valid_draft_07_and_accepts_a_remediation_result, test_schema_fits_the_session_request_limit
 - DISP-23: `test/remediation_prompt_test.rb` test_render_of_a_same_major_finding_has_the_same_major_language, test_render_of_a_same_major_finding_is_byte_identical_to_the_pre_major_path_prompt, test_render_of_a_major_version_finding_has_the_major_path_language, test_render_of_a_major_version_finding_asks_for_breaking_changes_and_tests_run_in_the_close, test_render_of_a_same_major_finding_does_not_ask_for_breaking_changes_or_tests_run
 - DISP-24: `test/remediation_prompt_test.rb` test_schema_accepts_breaking_changes_and_tests_run, test_schema_accepts_output_without_breaking_changes_or_tests_run
+- DISP-25: `test/playbook_test.rb` test_body_keeps_every_rule_of_the_full_prompt, test_body_handles_both_major_version_cases, test_body_has_the_recommended_sections
 - DISP-15: `test/webhook_test.rb` test_opened_with_auto_dispatch_starts_one_session
 - DISP-16: `test/webhook_test.rb` test_opened_without_auto_dispatch_records_only_the_finding
-- DISP-17: `test/webhook_test.rb` test_auto_dispatch_failure_keeps_the_finding_and_logs_the_error
+- DISP-17: `test/webhook_test.rb` test_auto_dispatch_failure_keeps_the_finding_and_logs_the_error, test_auto_dispatch_without_a_playbook_id_keeps_the_finding_and_logs_the_error
 - DISP-18: `test/webhook_test.rb` test_auto_dispatch_of_an_unfixable_finding_creates_nothing, test_auto_dispatch_skips_a_finding_whose_fix_branch_exists
 - DISP-19: `test/devin_client_test.rb` test_not_found_raises_devin_api_error
 - DISP-20: `test/devin_client_test.rb` test_list_repositories_uses_v3beta1_and_maps_structs
 - DISP-21: unproven (the wiring in `bin/dispatch` has no tests)
 - DISP-22: unproven (the wiring in `bin/dispatch` has no tests)
+- DISP-26: `test/devin_client_test.rb` test_list_playbooks_gets_the_org_playbooks_and_maps_structs, test_create_playbook_posts_title_body_macro_and_schema, test_update_playbook_puts_title_body_macro_and_schema; `test/playbook_test.rb` test_current_compares_title_macro_body_and_schema (the wiring in `bin/playbook-sync` has no tests)
 
 </details>

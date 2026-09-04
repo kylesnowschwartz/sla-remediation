@@ -19,6 +19,7 @@ module SLA
     def setup
       ENV['SLA_WEBHOOK_SECRET'] = SECRET
       ENV['SLA_REPO'] = REPO
+      ENV['DEVIN_PLAYBOOK_ID'] = 'pb_test'
       ENV.delete('SLA_AUTO_DISPATCH')
       DB[:sessions].delete
       DB[:findings].delete
@@ -115,6 +116,20 @@ module SLA
       assert_not_requested :post, SESSIONS_URL
       assert_equal 0, DB[:sessions].count
       assert_match(/result=started dispatch=not_fixable$/, @log.string)
+    end
+
+    def test_auto_dispatch_without_a_playbook_id_keeps_the_finding_and_logs_the_error
+      ENV['SLA_AUTO_DISPATCH'] = 'true'
+      ENV.delete('DEVIN_PLAYBOOK_ID')
+
+      deliver('github_issues_opened.json')
+
+      assert_equal 200, last_response.status
+      assert_equal({ 'result' => 'started' }, JSON.parse(last_response.body))
+      assert_not_requested :post, SESSIONS_URL
+      assert_equal 1, DB[:findings].count
+      assert_equal 0, DB[:sessions].count
+      assert_match(%r{result=started dispatch=error \(DEVIN_PLAYBOOK_ID unset; run bin/playbook-sync\)$}, @log.string)
     end
 
     def test_auto_dispatch_failure_keeps_the_finding_and_logs_the_error

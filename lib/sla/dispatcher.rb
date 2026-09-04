@@ -13,15 +13,20 @@ module SLA
   # The sessions row is inserted as a reservation before the Devin API is called,
   # so the unique index on finding_id decides which of two racing dispatches
   # spends ACUs; the loser never reaches Devin.
+  #
+  # The session is attached to the playbook DEVIN_PLAYBOOK_ID names, which holds
+  # the remediation procedure; the prompt carries only the finding's facts.
   class Dispatcher
     TAG = 'sla-remediation'
     RESERVED_STATUS = 'dispatching'
 
-    def initialize(db:, devin:, github:, repo:, max_acu_limit: 3, out: $stdout)
+    def initialize(db:, devin:, github:, repo:, playbook_id: ENV.fetch('DEVIN_PLAYBOOK_ID'), max_acu_limit: 3,
+                   out: $stdout)
       @db = db
       @devin = devin
       @github = github
       @repo = repo
+      @playbook_id = playbook_id
       @max_acu_limit = max_acu_limit
       @out = out
     end
@@ -61,6 +66,7 @@ module SLA
         title: finding[:issue_title],
         repos: [@repo],
         tags: [TAG, "issue-#{finding[:issue_number]}"],
+        playbook_id: @playbook_id,
         structured_output_schema: RemediationPrompt.schema,
         max_acu_limit: @max_acu_limit,
         resumable: true
